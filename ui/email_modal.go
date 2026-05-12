@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bakdb/config"
 	"bakdb/email"
 	"fmt"
 	"strings"
@@ -85,8 +86,8 @@ type EmailModal struct {
 	statusIsErr bool
 }
 
-// NewEmailModal khởi tạo modal với đường dẫn file backup.
-func NewEmailModal(backupFile string) EmailModal {
+// NewEmailModal khởi tạo modal với đường dẫn file backup và defaults từ .env.
+func NewEmailModal(backupFile string, d config.Defaults) EmailModal {
 	m := EmailModal{
 		backupFile: backupFile,
 		Active:     true,
@@ -98,13 +99,12 @@ func NewEmailModal(backupFile string) EmailModal {
 		"recipient@example.com  (nhiều địa chỉ cách nhau bởi dấu phẩy)",
 		"Database Backup  (tuỳ chọn)",
 	}
-	labels := [fieldCount]string{
-		"Gmail của bạn",
-		"App Password",
-		"Gửi đến",
-		"Tiêu đề",
+	prefills := [fieldCount]string{
+		d.EmailFrom,
+		d.EmailAppPassword,
+		d.EmailTo,
+		d.EmailSubject,
 	}
-	_ = labels
 
 	for i := range m.inputs {
 		t := textinput.New()
@@ -114,6 +114,9 @@ func NewEmailModal(backupFile string) EmailModal {
 		if i == fieldAppPass {
 			t.EchoMode = textinput.EchoPassword
 			t.EchoCharacter = '•'
+		}
+		if prefills[i] != "" {
+			t.SetValue(prefills[i])
 		}
 		if i == fieldFrom {
 			t.Focus()

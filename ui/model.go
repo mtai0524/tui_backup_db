@@ -30,6 +30,7 @@ type Model struct {
 	message    string
 	quitting   bool
 	emailModal EmailModal
+	defaults   config.Defaults
 }
 
 type item struct {
@@ -99,10 +100,11 @@ func InitialModel() Model {
 	s.Style = spinnerStyle
 
 	m := Model{
-		state:   stateSelectDB,
-		list:    l,
-		inputs:  inputs,
-		spinner: s,
+		state:    stateSelectDB,
+		list:     l,
+		inputs:   inputs,
+		spinner:  s,
+		defaults: defaults,
 	}
 
 	// Nếu .env chỉ định BAKDB_TYPE hợp lệ, nhảy thẳng vào màn nhập chi tiết

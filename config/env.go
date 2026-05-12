@@ -18,6 +18,12 @@ type Defaults struct {
 	ConnString string
 	BinaryPath string
 	OutputDir  string
+
+	// Email modal
+	EmailFrom        string
+	EmailAppPassword string
+	EmailTo          string
+	EmailSubject     string
 }
 
 // Recognised environment variable names. They are also the keys allowed in the
@@ -33,6 +39,11 @@ const (
 	envBinaryPath = "BAKDB_BINARY_PATH"
 	envOutputDir  = "BAKDB_OUTPUT_DIR"
 	envFile       = "BAKDB_ENV_FILE"
+
+	envEmailFrom    = "BAKDB_EMAIL_FROM"
+	envEmailAppPass = "BAKDB_EMAIL_APP_PASSWORD"
+	envEmailTo      = "BAKDB_EMAIL_TO"
+	envEmailSubject = "BAKDB_EMAIL_SUBJECT"
 )
 
 // Load reads defaults in this priority order (highest wins):
@@ -51,6 +62,7 @@ func Load() Defaults {
 	for _, k := range []string{
 		envType, envHost, envPort, envUser, envPassword,
 		envDatabase, envConnString, envBinaryPath, envOutputDir,
+		envEmailFrom, envEmailAppPass, envEmailTo, envEmailSubject,
 	} {
 		if v, ok := os.LookupEnv(k); ok && v != "" {
 			values[k] = v
@@ -58,15 +70,19 @@ func Load() Defaults {
 	}
 
 	return Defaults{
-		Type:       NormalizeType(values[envType]),
-		Host:       values[envHost],
-		Port:       values[envPort],
-		User:       values[envUser],
-		Password:   values[envPassword],
-		Database:   values[envDatabase],
-		ConnString: values[envConnString],
-		BinaryPath: values[envBinaryPath],
-		OutputDir:  values[envOutputDir],
+		Type:             NormalizeType(values[envType]),
+		Host:             values[envHost],
+		Port:             values[envPort],
+		User:             values[envUser],
+		Password:         values[envPassword],
+		Database:         values[envDatabase],
+		ConnString:       values[envConnString],
+		BinaryPath:       values[envBinaryPath],
+		OutputDir:        values[envOutputDir],
+		EmailFrom:        values[envEmailFrom],
+		EmailAppPassword: values[envEmailAppPass],
+		EmailTo:          values[envEmailTo],
+		EmailSubject:     values[envEmailSubject],
 	}
 }
 

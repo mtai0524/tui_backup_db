@@ -122,7 +122,7 @@ func (m Model) updateResult(msg tea.Msg) (Model, tea.Cmd) {
 			return InitialModel(), nil
 		case "e":
 			if m.err == nil && m.message != "" {
-				m.emailModal = NewEmailModal(m.message)
+				m.emailModal = NewEmailModal(m.message, m.defaults)
 				m.state = stateEmail
 				return m, textinput.Blink
 			}
