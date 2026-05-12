@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -185,8 +186,26 @@ func parsePostgresConnString(connStr, defaultHost, defaultPort, defaultUser, def
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// expandHome thay thế "~" hoặc "~/..." bằng thư mục home của user.
+func expandHome(p string) string {
+	if p == "" || p[0] != '~' {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return p
+	}
+	if p == "~" {
+		return home
+	}
+	if len(p) > 1 && (p[1] == '/' || p[1] == filepath.Separator) {
+		return filepath.Join(home, p[2:])
+	}
+	return p
+}
+
 func resolveOutputDir(outputDir string) (string, error) {
-	dir := outputDir
+	dir := strings.TrimSpace(outputDir)
 	if dir == "" {
 		var err error
 		dir, err = os.Getwd()
@@ -194,6 +213,7 @@ func resolveOutputDir(outputDir string) (string, error) {
 			dir = "."
 		}
 	}
+	dir = expandHome(dir)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", fmt.Errorf("cannot create output directory %q: %w", dir, err)
 	}
@@ -201,6 +221,21 @@ func resolveOutputDir(outputDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("cannot resolve output directory: %w", err)
 	}
+	info, statErr := os.Stat(abs)
+	if statErr != nil {
+		return "", fmt.Errorf("cannot stat output directory %q: %w", abs, statErr)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("output path %q exists but is not a directory", abs)
+	}
+	// Kiểm tra quyền ghi bằng cách tạo file tạm.
+	probe, err := os.CreateTemp(abs, ".bakdb_probe_*")
+	if err != nil {
+		return "", fmt.Errorf("output directory %q is not writable: %w", abs, err)
+	}
+	probeName := probe.Name()
+	_ = probe.Close()
+	_ = os.Remove(probeName)
 	return abs, nil
 }
 
@@ -211,7 +246,9 @@ func buildSQLServerBaseArgs(host, port, user, password string) []string {
 	} else {
 		server = fmt.Sprintf("tcp:%s", host)
 	}
-	args := []string{"-S", server, "-l", "30", "-C"}
+	// -b: return non-zero exit code on SQL errors (so we don't silently treat
+	// error messages as data).
+	args := []string{"-S", server, "-l", "30", "-C", "-b"}
 	if user == "" {
 		args = append(args, "-E")
 	} else {
@@ -246,10 +283,10 @@ func ExecuteBackup(cfg Config) (string, error) {
 		return "", err
 	}
 
-	dbName := cfg.Database
-	if dbName == "" {
-		dbName = "backup"
+	if strings.TrimSpace(cfg.Database) == "" {
+		return "", fmt.Errorf("database name is required (please fill in the 'Database Name' field)")
 	}
+	dbName := cfg.Database
 
 	bin := cfg.BinaryPath
 	var filename string
@@ -281,6 +318,7 @@ func ExecuteBackup(cfg Config) (string, error) {
 		)
 		out, cmdErr := cmd.CombinedOutput()
 		if cmdErr != nil {
+			_ = os.Remove(filename)
 			return "", fmt.Errorf("backup failed: %v\nOutput: %s", cmdErr, string(out))
 		}
 		if err := verifyFile(filename, out); err != nil {
@@ -310,11 +348,15 @@ func ExecuteBackup(cfg Config) (string, error) {
 			"-U", user, "-f", filename,
 			cfg.Database,
 		)
+		// Preserve PATH/HOME/etc. – assigning a fresh slice would wipe the
+		// inherited environment and break tools that rely on it.
+		cmd.Env = os.Environ()
 		if password != "" {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("PGPASSWORD=%s", password))
 		}
 		out, cmdErr := cmd.CombinedOutput()
 		if cmdErr != nil {
+			_ = os.Remove(filename)
 			return "", fmt.Errorf("backup failed: %v\nOutput: %s", cmdErr, string(out))
 		}
 		if err := verifyFile(filename, out); err != nil {
@@ -355,11 +397,11 @@ func ExecuteBackup(cfg Config) (string, error) {
 			}
 
 		} else {
-			// Remote: chạy sqlcmd và capture stdout trực tiếp vào file
-			// Không dùng flag -o vì -o chỉ ghi messages, không ghi SELECT results
+			// Remote: dump schema/data qua sqlcmd → file SQL local.
 			filename = filepath.Join(absDir, fmt.Sprintf("%s_%s.sql", dbName, timestamp))
 
 			if err := backupSQLServerRemote(bin, host, port, user, password, cfg.Database, filename); err != nil {
+				_ = os.Remove(filename)
 				return "", err
 			}
 			if err := verifyFile(filename, nil); err != nil {
@@ -374,17 +416,54 @@ func ExecuteBackup(cfg Config) (string, error) {
 	return filename, nil
 }
 
+// sqlcmdErrorLine matches sqlcmd diagnostic rows like "Msg 1038, Level 15, ..."
+var sqlcmdErrorLine = regexp.MustCompile(`^(Msg \d+,|Changed database context|HResult|Sqlcmd:)`)
+
+// cleanSQLCmdOutput loại bỏ separator lines, header dashes và dòng chẩn đoán
+// của sqlcmd để chỉ giữ lại các giá trị thật.
+func cleanSQLCmdOutput(raw string) []string {
+	var out []string
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimRight(line, "\r\t ")
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		// Bỏ header dashes do sqlcmd in ra ("----------").
+		if strings.Trim(trimmed, "-") == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "(") && strings.HasSuffix(trimmed, "affected)") {
+			continue
+		}
+		if sqlcmdErrorLine.MatchString(trimmed) {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+// runSQLCmd thực thi sqlcmd và trả về stdout đã làm sạch. Stderr/output đầy đủ
+// được trả về kèm error nếu thất bại để dễ debug.
+func runSQLCmd(bin string, args []string) (string, error) {
+	cmd := exec.Command(bin, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%w\nCommand: %s %s\nOutput: %s",
+			err, bin, strings.Join(args, " "), string(out))
+	}
+	return string(out), nil
+}
+
 // backupSQLServerRemote export schema + data từ SQL Server remote ra file SQL local.
-// Dùng sqlcmd với Stdout redirect thay vì flag -o.
 func backupSQLServerRemote(bin, host, port, user, password, database, outFile string) error {
-	// Tạo file output trước để sqlcmd có thể ghi vào
 	f, err := os.Create(outFile)
 	if err != nil {
 		return fmt.Errorf("cannot create output file %q: %w", outFile, err)
 	}
 	defer f.Close()
 
-	// Ghi header
 	header := fmt.Sprintf(
 		"-- SQL Server backup\n-- Database: %s\n-- Generated: %s\n-- Host: %s\nUSE [%s];\nGO\n\n",
 		database, time.Now().Format("2006-01-02 15:04:05"), host, database,
@@ -393,7 +472,6 @@ func backupSQLServerRemote(bin, host, port, user, password, database, outFile st
 		return fmt.Errorf("cannot write file header: %w", err)
 	}
 
-	// Lấy danh sách tables
 	tables, err := getSQLServerTables(bin, host, port, user, password, database)
 	if err != nil {
 		return fmt.Errorf("cannot list tables: %w", err)
@@ -403,10 +481,8 @@ func backupSQLServerRemote(bin, host, port, user, password, database, outFile st
 		return nil
 	}
 
-	// Export từng table
 	for _, table := range tables {
 		if err := exportSQLServerTable(bin, host, port, user, password, database, table, f); err != nil {
-			// Ghi warning vào file thay vì abort toàn bộ
 			_, _ = f.WriteString(fmt.Sprintf("-- WARNING: could not export table %s: %v\n\n", table, err))
 		}
 	}
@@ -416,88 +492,132 @@ func backupSQLServerRemote(bin, host, port, user, password, database, outFile st
 
 // getSQLServerTables trả về danh sách "schema.table" trong database.
 func getSQLServerTables(bin, host, port, user, password, database string) ([]string, error) {
-	query := fmt.Sprintf(
-		"SET NOCOUNT ON; SELECT TABLE_SCHEMA+'.'+TABLE_NAME FROM [%s].INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE' ORDER BY TABLE_SCHEMA, TABLE_NAME;",
-		database,
-	)
+	query := "SET NOCOUNT ON; SELECT TABLE_SCHEMA+'.'+TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE' ORDER BY TABLE_SCHEMA, TABLE_NAME;"
 	args := append(buildSQLServerBaseArgs(host, port, user, password),
 		"-d", database,
 		"-Q", query,
 		"-h", "-1", // không in header
-		"-W", // trim trailing spaces
+		"-W",       // trim trailing spaces
+		"-s", "|", // dùng | làm separator (an toàn hơn comma)
 	)
-	out, err := exec.Command(bin, args...).Output()
+	out, err := runSQLCmd(bin, args)
 	if err != nil {
-		return nil, fmt.Errorf("%w\nOutput: %s", err, string(out))
+		return nil, err
 	}
 
-	var tables []string
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "--") || line == "---" {
-			continue
+	tables := cleanSQLCmdOutput(out)
+	// Loại thêm các tên không hợp lệ (không chứa dấu chấm schema.table).
+	var valid []string
+	for _, t := range tables {
+		if strings.Contains(t, ".") {
+			valid = append(valid, t)
 		}
-		tables = append(tables, line)
 	}
-	return tables, nil
+	return valid, nil
 }
 
-// exportSQLServerTable export một table dưới dạng INSERT statements, ghi vào w.
+// exportSQLServerTable export một table dưới dạng INSERT statements, ghi vào f.
 func exportSQLServerTable(bin, host, port, user, password, database, table string, f *os.File) error {
-	// Bước 1: lấy tên columns
+	parts := strings.SplitN(table, ".", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid table name %q", table)
+	}
+	schema, name := parts[0], parts[1]
+
+	// Lấy cột + kiểu để biết khi nào cần quote/escape.
 	colQuery := fmt.Sprintf(
-		"SET NOCOUNT ON; SELECT COLUMN_NAME FROM [%s].INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA+'.'+ TABLE_NAME = '%s' ORDER BY ORDINAL_POSITION;",
-		database, table,
+		"SET NOCOUNT ON; SELECT COLUMN_NAME+'|'+DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "+
+			"WHERE TABLE_SCHEMA = '%s' AND TABLE_NAME = '%s' ORDER BY ORDINAL_POSITION;",
+		strings.ReplaceAll(schema, "'", "''"),
+		strings.ReplaceAll(name, "'", "''"),
 	)
-	args := append(buildSQLServerBaseArgs(host, port, user, password),
+	colArgs := append(buildSQLServerBaseArgs(host, port, user, password),
 		"-d", database,
 		"-Q", colQuery,
 		"-h", "-1",
 		"-W",
 	)
-	colOut, err := exec.Command(bin, args...).Output()
+	colOut, err := runSQLCmd(bin, colArgs)
 	if err != nil {
 		return fmt.Errorf("get columns: %w", err)
 	}
 
-	var cols []string
-	for _, line := range strings.Split(string(colOut), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "--") || line == "---" {
+	type column struct{ name, dataType string }
+	var cols []column
+	for _, line := range cleanSQLCmdOutput(colOut) {
+		p := strings.SplitN(line, "|", 2)
+		if len(p) != 2 {
 			continue
 		}
-		cols = append(cols, line)
+		cols = append(cols, column{name: p[0], dataType: strings.ToLower(p[1])})
 	}
 	if len(cols) == 0 {
 		return nil
 	}
 
-	// Bước 2: ghi comment và SET IDENTITY_INSERT
-	_, _ = f.WriteString(fmt.Sprintf("-- Table: %s\nSET IDENTITY_INSERT [%s] ON;\n", table, table))
+	_, _ = f.WriteString(fmt.Sprintf("-- Table: %s\n", table))
 
-	// Bước 3: SELECT data và ghi dưới dạng INSERT
-	// Dùng FOR XML PATH để tránh vấn đề với giá trị chứa dấu phẩy/newline
-	colList := "[" + strings.Join(cols, "],[") + "]"
-	selectQuery := fmt.Sprintf("SET NOCOUNT ON; SELECT %s FROM [%s].[%s] FOR XML PATH('row'), ROOT('rows');",
-		colList,
-		strings.Split(table, ".")[0], // schema
-		strings.Split(table, ".")[1], // table name
+	// Build SELECT expression: convert mỗi cột thành literal SQL phù hợp.
+	var selectExprs []string
+	for _, c := range cols {
+		colRef := fmt.Sprintf("[%s]", c.name)
+		var expr string
+		switch c.dataType {
+		case "int", "bigint", "smallint", "tinyint", "bit",
+			"decimal", "numeric", "money", "smallmoney", "float", "real":
+			expr = fmt.Sprintf("ISNULL(CONVERT(NVARCHAR(MAX), %s), 'NULL')", colRef)
+		case "datetime", "smalldatetime", "datetime2", "date", "time", "datetimeoffset":
+			expr = fmt.Sprintf("ISNULL(''''+CONVERT(NVARCHAR(MAX), %s, 121)+'''', 'NULL')", colRef)
+		case "uniqueidentifier":
+			expr = fmt.Sprintf("ISNULL(''''+CONVERT(NVARCHAR(MAX), %s)+'''', 'NULL')", colRef)
+		case "varbinary", "binary", "image":
+			expr = fmt.Sprintf("ISNULL('0x'+CONVERT(NVARCHAR(MAX), %s, 2), 'NULL')", colRef)
+		default:
+			// String types — escape single quotes, drop CR/LF to keep each
+			// INSERT statement on a single output line.
+			expr = fmt.Sprintf(
+				"ISNULL(''''+REPLACE(REPLACE(REPLACE(CONVERT(NVARCHAR(MAX), %s), '''', ''''''), CHAR(13), ' '), CHAR(10), ' ')+'''', 'NULL')",
+				colRef,
+			)
+		}
+		selectExprs = append(selectExprs, expr)
+	}
+
+	colListForInsert := make([]string, 0, len(cols))
+	for _, c := range cols {
+		colListForInsert = append(colListForInsert, fmt.Sprintf("[%s]", c.name))
+	}
+
+	prefix := fmt.Sprintf("INSERT INTO [%s].[%s] (%s) VALUES (",
+		schema, name, strings.Join(colListForInsert, ","))
+
+	// Nối các expression bằng + ',' + để output có dạng "a,b,c".
+	valueExpr := strings.Join(selectExprs, "+','+")
+	selectQuery := fmt.Sprintf(
+		"SET NOCOUNT ON; SELECT '%s'+%s+');' FROM [%s].[%s];",
+		strings.ReplaceAll(prefix, "'", "''"),
+		valueExpr,
+		schema, name,
 	)
-	args2 := append(buildSQLServerBaseArgs(host, port, user, password),
+
+	dataArgs := append(buildSQLServerBaseArgs(host, port, user, password),
 		"-d", database,
 		"-Q", selectQuery,
 		"-h", "-1",
 		"-W",
-		"-y", "0", // unlimited column width
+		"-y", "0", // unlimited variable-length column width
+		"-Y", "0", // unlimited fixed-length column width
 	)
-
-	cmd := exec.Command(bin, args2...)
-	cmd.Stdout = f // ghi thẳng stdout vào file
-	errOut, err2 := cmd.Output()
-	if err2 != nil {
-		return fmt.Errorf("export data: %w\n%s", err2, string(errOut))
+	dataOut, err := runSQLCmd(bin, dataArgs)
+	if err != nil {
+		return fmt.Errorf("export data: %w", err)
 	}
 
-	_, _ = f.WriteString(fmt.Sprintf("\nSET IDENTITY_INSERT [%s] OFF;\nGO\n\n", table))
+	for _, line := range cleanSQLCmdOutput(dataOut) {
+		if _, werr := f.WriteString(line + "\n"); werr != nil {
+			return fmt.Errorf("write row: %w", werr)
+		}
+	}
+	_, _ = f.WriteString("GO\n\n")
 	return nil
 }
