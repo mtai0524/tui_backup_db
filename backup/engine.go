@@ -377,36 +377,14 @@ func ExecuteBackup(cfg Config) (string, error) {
 			host = "localhost"
 		}
 
-		isLocal := host == "localhost" || host == "127.0.0.1" || host == "."
-
-		if isLocal {
-			// Local: BACKUP DATABASE → .bak (SQL Server native format)
-			filename = filepath.Join(absDir, fmt.Sprintf("%s_%s.bak", dbName, timestamp))
-			backupQuery := fmt.Sprintf(
-				"BACKUP DATABASE [%s] TO DISK = N'%s' WITH FORMAT, INIT, STATS = 10",
-				cfg.Database, filename,
-			)
-			args := append(buildSQLServerBaseArgs(host, port, user, password), "-Q", backupQuery)
-			cmd := exec.Command(bin, args...)
-			out, cmdErr := cmd.CombinedOutput()
-			if cmdErr != nil {
-				return "", fmt.Errorf("backup failed: %v\nOutput: %s", cmdErr, string(out))
-			}
-			if err := verifyFile(filename, out); err != nil {
-				return "", err
-			}
-
-		} else {
-			// Remote: dump schema/data qua sqlcmd → file SQL local.
-			filename = filepath.Join(absDir, fmt.Sprintf("%s_%s.sql", dbName, timestamp))
-
-			if err := backupSQLServerRemote(bin, host, port, user, password, cfg.Database, filename); err != nil {
-				_ = os.Remove(filename)
-				return "", err
-			}
-			if err := verifyFile(filename, nil); err != nil {
-				return "", err
-			}
+		// Dump schema + data qua sqlcmd → file .sql paste-and-run được.
+		filename = filepath.Join(absDir, fmt.Sprintf("%s_%s.sql", dbName, timestamp))
+		if err := backupSQLServerToScript(bin, host, port, user, password, cfg.Database, filename); err != nil {
+			_ = os.Remove(filename)
+			return "", err
+		}
+		if err := verifyFile(filename, nil); err != nil {
+			return "", err
 		}
 
 	default:
@@ -456,8 +434,9 @@ func runSQLCmd(bin string, args []string) (string, error) {
 	return string(out), nil
 }
 
-// backupSQLServerRemote export schema + data từ SQL Server remote ra file SQL local.
-func backupSQLServerRemote(bin, host, port, user, password, database, outFile string) error {
+// backupSQLServerToScript export schema (CREATE TABLE + PK) và data (INSERT)
+// của một SQL Server database ra file .sql paste-and-run được.
+func backupSQLServerToScript(bin, host, port, user, password, database, outFile string) error {
 	f, err := os.Create(outFile)
 	if err != nil {
 		return fmt.Errorf("cannot create output file %q: %w", outFile, err)
@@ -516,7 +495,206 @@ func getSQLServerTables(bin, host, port, user, password, database string) ([]str
 	return valid, nil
 }
 
-// exportSQLServerTable export một table dưới dạng INSERT statements, ghi vào f.
+// sqlServerColumn mô tả một cột dùng cho cả CREATE TABLE và INSERT.
+type sqlServerColumn struct {
+	name       string
+	typeName   string // base type, lowercase ("int", "nvarchar", ...)
+	maxLength  int    // -1 = MAX; bytes (nvarchar/nchar gấp đôi số ký tự)
+	precision  int
+	scale      int
+	nullable   bool
+	isIdentity bool
+	seed       string
+	increment  string
+}
+
+// getSQLServerColumns đọc metadata cột (bỏ cột computed) từ sys.columns.
+func getSQLServerColumns(bin, host, port, user, password, database, schema, name string) ([]sqlServerColumn, error) {
+	sch := strings.ReplaceAll(schema, "'", "''")
+	tbl := strings.ReplaceAll(name, "'", "''")
+	query := fmt.Sprintf(`SET NOCOUNT ON;
+SELECT
+  c.name + '|' +
+  LOWER(TYPE_NAME(c.system_type_id)) + '|' +
+  CONVERT(VARCHAR(20), c.max_length) + '|' +
+  CONVERT(VARCHAR(20), c.precision) + '|' +
+  CONVERT(VARCHAR(20), c.scale) + '|' +
+  CONVERT(VARCHAR(1), c.is_nullable) + '|' +
+  CONVERT(VARCHAR(1), c.is_identity) + '|' +
+  ISNULL(CONVERT(VARCHAR(50), ic.seed_value), '') + '|' +
+  ISNULL(CONVERT(VARCHAR(50), ic.increment_value), '')
+FROM sys.columns c
+LEFT JOIN sys.identity_columns ic
+  ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+WHERE c.object_id = OBJECT_ID('[%s].[%s]')
+  AND c.is_computed = 0
+ORDER BY c.column_id;`, sch, tbl)
+
+	args := append(buildSQLServerBaseArgs(host, port, user, password),
+		"-d", database, "-Q", query, "-h", "-1", "-W", "-y", "0", "-Y", "0",
+	)
+	out, err := runSQLCmd(bin, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var cols []sqlServerColumn
+	for _, line := range cleanSQLCmdOutput(out) {
+		parts := strings.Split(line, "|")
+		if len(parts) < 9 {
+			continue
+		}
+		c := sqlServerColumn{
+			name:       parts[0],
+			typeName:   parts[1],
+			maxLength:  atoiOr(parts[2], 0),
+			precision:  atoiOr(parts[3], 0),
+			scale:      atoiOr(parts[4], 0),
+			nullable:   parts[5] == "1",
+			isIdentity: parts[6] == "1",
+			seed:       parts[7],
+			increment:  parts[8],
+		}
+		cols = append(cols, c)
+	}
+	return cols, nil
+}
+
+// getSQLServerPKColumns trả về danh sách cột (theo thứ tự) thuộc primary key.
+func getSQLServerPKColumns(bin, host, port, user, password, database, schema, name string) ([]string, error) {
+	sch := strings.ReplaceAll(schema, "'", "''")
+	tbl := strings.ReplaceAll(name, "'", "''")
+	query := fmt.Sprintf(`SET NOCOUNT ON;
+SELECT c.name
+FROM sys.indexes i
+JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+WHERE i.is_primary_key = 1
+  AND i.object_id = OBJECT_ID('[%s].[%s]')
+ORDER BY ic.key_ordinal;`, sch, tbl)
+
+	args := append(buildSQLServerBaseArgs(host, port, user, password),
+		"-d", database, "-Q", query, "-h", "-1", "-W",
+	)
+	out, err := runSQLCmd(bin, args)
+	if err != nil {
+		return nil, err
+	}
+	return cleanSQLCmdOutput(out), nil
+}
+
+// getSQLServerDefaults trả về map column_name → DEFAULT constraint definition.
+func getSQLServerDefaults(bin, host, port, user, password, database, schema, name string) (map[string]string, error) {
+	sch := strings.ReplaceAll(schema, "'", "''")
+	tbl := strings.ReplaceAll(name, "'", "''")
+	// Dùng separator '~|~' để giảm khả năng đụng độ với ký tự trong definition.
+	query := fmt.Sprintf(`SET NOCOUNT ON;
+SELECT c.name + '~|~' + dc.definition
+FROM sys.columns c
+JOIN sys.default_constraints dc ON c.default_object_id = dc.object_id
+WHERE c.object_id = OBJECT_ID('[%s].[%s]')
+ORDER BY c.column_id;`, sch, tbl)
+
+	args := append(buildSQLServerBaseArgs(host, port, user, password),
+		"-d", database, "-Q", query, "-h", "-1", "-W", "-y", "0", "-Y", "0",
+	)
+	out, err := runSQLCmd(bin, args)
+	if err != nil {
+		return nil, err
+	}
+
+	defaults := map[string]string{}
+	for _, line := range cleanSQLCmdOutput(out) {
+		p := strings.SplitN(line, "~|~", 2)
+		if len(p) != 2 {
+			continue
+		}
+		defaults[p[0]] = p[1]
+	}
+	return defaults, nil
+}
+
+// renderSQLServerType ghép tên type với độ dài/precision/scale phù hợp.
+func renderSQLServerType(c sqlServerColumn) string {
+	t := c.typeName
+	switch t {
+	case "varchar", "char", "varbinary", "binary":
+		if c.maxLength == -1 {
+			return fmt.Sprintf("%s(MAX)", t)
+		}
+		return fmt.Sprintf("%s(%d)", t, c.maxLength)
+	case "nvarchar", "nchar":
+		if c.maxLength == -1 {
+			return fmt.Sprintf("%s(MAX)", t)
+		}
+		return fmt.Sprintf("%s(%d)", t, c.maxLength/2)
+	case "decimal", "numeric":
+		return fmt.Sprintf("%s(%d,%d)", t, c.precision, c.scale)
+	case "datetime2", "time", "datetimeoffset":
+		return fmt.Sprintf("%s(%d)", t, c.scale)
+	case "float":
+		if c.precision != 0 && c.precision != 53 {
+			return fmt.Sprintf("float(%d)", c.precision)
+		}
+		return "float"
+	default:
+		return t
+	}
+}
+
+// writeCreateTable phát sinh CREATE TABLE (kèm IDENTITY, DEFAULT, NULL/NOT NULL,
+// PRIMARY KEY) cho một table. Có thêm DROP IF EXISTS để script idempotent.
+func writeCreateTable(f *os.File, schema, name string, cols []sqlServerColumn, pkCols []string, defaults map[string]string) error {
+	if _, err := f.WriteString(fmt.Sprintf(
+		"IF OBJECT_ID('[%s].[%s]', 'U') IS NOT NULL DROP TABLE [%s].[%s];\nGO\n",
+		schema, name, schema, name,
+	)); err != nil {
+		return err
+	}
+
+	var lines []string
+	for _, c := range cols {
+		parts := []string{fmt.Sprintf("  [%s] %s", c.name, renderSQLServerType(c))}
+		if c.isIdentity {
+			seed := c.seed
+			if seed == "" {
+				seed = "1"
+			}
+			inc := c.increment
+			if inc == "" {
+				inc = "1"
+			}
+			parts = append(parts, fmt.Sprintf("IDENTITY(%s,%s)", seed, inc))
+		}
+		if def, ok := defaults[c.name]; ok && def != "" {
+			parts = append(parts, fmt.Sprintf("DEFAULT %s", def))
+		}
+		if c.nullable {
+			parts = append(parts, "NULL")
+		} else {
+			parts = append(parts, "NOT NULL")
+		}
+		lines = append(lines, strings.Join(parts, " "))
+	}
+	if len(pkCols) > 0 {
+		quoted := make([]string, 0, len(pkCols))
+		for _, p := range pkCols {
+			quoted = append(quoted, fmt.Sprintf("[%s]", p))
+		}
+		lines = append(lines, fmt.Sprintf(
+			"  CONSTRAINT [PK_%s_%s] PRIMARY KEY (%s)",
+			schema, name, strings.Join(quoted, ", "),
+		))
+	}
+
+	body := fmt.Sprintf("CREATE TABLE [%s].[%s] (\n%s\n);\nGO\n",
+		schema, name, strings.Join(lines, ",\n"),
+	)
+	_, err := f.WriteString(body)
+	return err
+}
+
+// exportSQLServerTable phát sinh CREATE TABLE + INSERTs cho một table, ghi vào f.
 func exportSQLServerTable(bin, host, port, user, password, database, table string, f *os.File) error {
 	parts := strings.SplitN(table, ".", 2)
 	if len(parts) != 2 {
@@ -524,45 +702,47 @@ func exportSQLServerTable(bin, host, port, user, password, database, table strin
 	}
 	schema, name := parts[0], parts[1]
 
-	// Lấy cột + kiểu để biết khi nào cần quote/escape.
-	colQuery := fmt.Sprintf(
-		"SET NOCOUNT ON; SELECT COLUMN_NAME+'|'+DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "+
-			"WHERE TABLE_SCHEMA = '%s' AND TABLE_NAME = '%s' ORDER BY ORDINAL_POSITION;",
-		strings.ReplaceAll(schema, "'", "''"),
-		strings.ReplaceAll(name, "'", "''"),
-	)
-	colArgs := append(buildSQLServerBaseArgs(host, port, user, password),
-		"-d", database,
-		"-Q", colQuery,
-		"-h", "-1",
-		"-W",
-	)
-	colOut, err := runSQLCmd(bin, colArgs)
+	cols, err := getSQLServerColumns(bin, host, port, user, password, database, schema, name)
 	if err != nil {
 		return fmt.Errorf("get columns: %w", err)
-	}
-
-	type column struct{ name, dataType string }
-	var cols []column
-	for _, line := range cleanSQLCmdOutput(colOut) {
-		p := strings.SplitN(line, "|", 2)
-		if len(p) != 2 {
-			continue
-		}
-		cols = append(cols, column{name: p[0], dataType: strings.ToLower(p[1])})
 	}
 	if len(cols) == 0 {
 		return nil
 	}
 
-	_, _ = f.WriteString(fmt.Sprintf("-- Table: %s\n", table))
+	pkCols, err := getSQLServerPKColumns(bin, host, port, user, password, database, schema, name)
+	if err != nil {
+		return fmt.Errorf("get primary key: %w", err)
+	}
+	defaults, err := getSQLServerDefaults(bin, host, port, user, password, database, schema, name)
+	if err != nil {
+		return fmt.Errorf("get defaults: %w", err)
+	}
+
+	if _, err := f.WriteString(fmt.Sprintf("-- Table: %s\n", table)); err != nil {
+		return err
+	}
+	if err := writeCreateTable(f, schema, name, cols, pkCols, defaults); err != nil {
+		return fmt.Errorf("write CREATE TABLE: %w", err)
+	}
+
+	hasIdentity := false
+	for _, c := range cols {
+		if c.isIdentity {
+			hasIdentity = true
+			break
+		}
+	}
+	if hasIdentity {
+		_, _ = f.WriteString(fmt.Sprintf("SET IDENTITY_INSERT [%s].[%s] ON;\nGO\n", schema, name))
+	}
 
 	// Build SELECT expression: convert mỗi cột thành literal SQL phù hợp.
 	var selectExprs []string
 	for _, c := range cols {
 		colRef := fmt.Sprintf("[%s]", c.name)
 		var expr string
-		switch c.dataType {
+		switch c.typeName {
 		case "int", "bigint", "smallint", "tinyint", "bit",
 			"decimal", "numeric", "money", "smallmoney", "float", "real":
 			expr = fmt.Sprintf("ISNULL(CONVERT(NVARCHAR(MAX), %s), 'NULL')", colRef)
@@ -618,6 +798,30 @@ func exportSQLServerTable(bin, host, port, user, password, database, table strin
 			return fmt.Errorf("write row: %w", werr)
 		}
 	}
+	if hasIdentity {
+		_, _ = f.WriteString(fmt.Sprintf("SET IDENTITY_INSERT [%s].[%s] OFF;\nGO\n", schema, name))
+	}
 	_, _ = f.WriteString("GO\n\n")
 	return nil
+}
+
+// atoiOr parses s as int, returning fallback on error or empty input.
+func atoiOr(s string, fallback int) int {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return fallback
+	}
+	n := 0
+	sign := 1
+	for i, r := range s {
+		if i == 0 && r == '-' {
+			sign = -1
+			continue
+		}
+		if r < '0' || r > '9' {
+			return fallback
+		}
+		n = n*10 + int(r-'0')
+	}
+	return sign * n
 }
