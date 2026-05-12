@@ -17,12 +17,16 @@ func (m Model) updateSelectDB(msg tea.Msg) (Model, tea.Cmd) {
 			if ok {
 				m.dbType = i.title
 				m.state = stateEnterDetails
-				if m.dbType == "MySQL" {
-					m.inputs[1].SetValue("3306")
-				} else if m.dbType == "PostgreSQL" {
-					m.inputs[1].SetValue("5432")
-				} else if m.dbType == "SQL Server" {
-					m.inputs[1].SetValue("1433")
+				// Chỉ áp dụng port mặc định khi user chưa nạp port từ .env
+				if m.inputs[1].Value() == "" {
+					switch m.dbType {
+					case "MySQL":
+						m.inputs[1].SetValue("3306")
+					case "PostgreSQL":
+						m.inputs[1].SetValue("5432")
+					case "SQL Server":
+						m.inputs[1].SetValue("1433")
+					}
 				}
 				return m, nil
 			}

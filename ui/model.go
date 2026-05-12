@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"bakdb/config"
+
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -39,6 +41,8 @@ func (i item) Description() string { return i.desc }
 func (i item) FilterValue() string { return i.title }
 
 func InitialModel() Model {
+	defaults := config.Load()
+
 	items := []list.Item{
 		item{title: "MySQL", desc: "Backup a MySQL/MariaDB database using mysqldump"},
 		item{title: "PostgreSQL", desc: "Backup a PostgreSQL database using pg_dump"},
@@ -88,16 +92,53 @@ func InitialModel() Model {
 		inputs[i] = t
 	}
 
+	applyDefaults(inputs, defaults)
+
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = spinnerStyle
 
-	return Model{
+	m := Model{
 		state:   stateSelectDB,
 		list:    l,
 		inputs:  inputs,
 		spinner: s,
 	}
+
+	// Nếu .env chỉ định BAKDB_TYPE hợp lệ, nhảy thẳng vào màn nhập chi tiết
+	// với port mặc định phù hợp (nếu user không tự set port).
+	if defaults.Type != "" {
+		m.dbType = defaults.Type
+		m.state = stateEnterDetails
+		if defaults.Port == "" {
+			switch defaults.Type {
+			case "MySQL":
+				m.inputs[1].SetValue("3306")
+			case "PostgreSQL":
+				m.inputs[1].SetValue("5432")
+			case "SQL Server":
+				m.inputs[1].SetValue("1433")
+			}
+		}
+	}
+
+	return m
+}
+
+func applyDefaults(inputs []textinput.Model, d config.Defaults) {
+	set := func(idx int, v string) {
+		if v != "" {
+			inputs[idx].SetValue(v)
+		}
+	}
+	set(0, d.Host)
+	set(1, d.Port)
+	set(2, d.User)
+	set(3, d.Password)
+	set(4, d.Database)
+	set(5, d.ConnString)
+	set(6, d.BinaryPath)
+	set(7, d.OutputDir)
 }
 
 func (m Model) Init() tea.Cmd {
