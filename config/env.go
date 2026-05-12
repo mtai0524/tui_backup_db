@@ -50,11 +50,13 @@ const (
 //  1. Process environment variables
 //  2. .env file pointed to by BAKDB_ENV_FILE (if set)
 //  3. ".env" in the current working directory
+//  4. ".env.example" in the current working directory (fallback template)
 //
 // Missing files are ignored silently; the TUI simply starts with empty fields.
 func Load() Defaults {
 	values := map[string]string{}
 
+	mergeFile(values, ".env.example")
 	mergeFile(values, ".env")
 	if custom := os.Getenv(envFile); custom != "" {
 		mergeFile(values, custom)
