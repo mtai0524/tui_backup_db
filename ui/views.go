@@ -23,7 +23,7 @@ func (m Model) viewEnterDetails() string {
 	button := "\n\n" + m.renderButton("Start Backup", m.focusIndex == len(m.inputs))
 	b.WriteString(button)
 
-	b.WriteString(helpStyle.Render("\n\n (tab/shift+tab: move, enter: next/submit, q: quit)"))
+	b.WriteString(helpStyle.Render("\n\n (tab/shift+tab: move • enter: next/submit • ctrl+c: quit)"))
 
 	return docStyle.Render(b.String())
 }
@@ -44,13 +44,15 @@ func (m Model) viewResult() string {
 		b.WriteString(errorStyle.Render("✖ Backup Failed"))
 		b.WriteString("\n\n")
 		b.WriteString(m.err.Error())
+		b.WriteString("\n\n")
+		b.WriteString(helpStyle.Render("Press 'r' to restart • 'q' to quit"))
 	} else {
 		b.WriteString(successStyle.Render("✔ Backup Successful!"))
 		b.WriteString("\n\n")
 		b.WriteString(fmt.Sprintf("File saved to: %s", m.message))
+		b.WriteString("\n\n")
+		b.WriteString(helpStyle.Render("Press 'e' to send via email • 'r' to restart • 'q' to quit"))
 	}
-
-	b.WriteString("\n\n" + helpStyle.Render("Press 'r' to restart or 'q' to quit"))
 
 	return docStyle.Render(b.String())
 }

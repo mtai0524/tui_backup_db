@@ -14,6 +14,7 @@ const (
 	stateEnterDetails
 	stateBackingUp
 	stateResult
+	stateEmail
 )
 
 type Model struct {
@@ -26,6 +27,7 @@ type Model struct {
 	err        error
 	message    string
 	quitting   bool
+	emailModal EmailModal
 }
 
 type item struct {
@@ -37,7 +39,6 @@ func (i item) Description() string { return i.desc }
 func (i item) FilterValue() string { return i.title }
 
 func InitialModel() Model {
-	// DB Selection List
 	items := []list.Item{
 		item{title: "MySQL", desc: "Backup a MySQL/MariaDB database using mysqldump"},
 		item{title: "PostgreSQL", desc: "Backup a PostgreSQL database using pg_dump"},
@@ -47,41 +48,46 @@ func InitialModel() Model {
 	l := list.New(items, list.NewDefaultDelegate(), 0, 0)
 	l.Title = "Select Database Type"
 
-	// Credentials Inputs
-	inputs := make([]textinput.Model, 7)
+	// 8 input fields: index 0-6 như cũ, index 7 là Output Directory
+	inputs := make([]textinput.Model, 8)
 	var t textinput.Model
 	for i := range inputs {
 		t = textinput.New()
 		t.Cursor.Style = cursorStyle
-		t.CharLimit = 128
+		t.CharLimit = 256
 
 		switch i {
 		case 0:
 			t.Placeholder = "Host (e.g. localhost)"
+			t.CharLimit = 128
 			t.Focus()
 			t.PromptStyle = focusedStyle
 			t.TextStyle = focusedStyle
 		case 1:
 			t.Placeholder = "Port (e.g. 3306)"
+			t.CharLimit = 8
 		case 2:
 			t.Placeholder = "Username"
+			t.CharLimit = 128
 		case 3:
 			t.Placeholder = "Password"
+			t.CharLimit = 128
 			t.EchoMode = textinput.EchoPassword
 			t.EchoCharacter = '•'
 		case 4:
 			t.Placeholder = "Database Name"
+			t.CharLimit = 128
 		case 5:
-			t.Placeholder = "Connection String (Optional, overrides fields)"
-			t.CharLimit = 256
+			t.Placeholder = "Connection String (Optional, overrides fields above)"
 		case 6:
 			t.Placeholder = "Tool Binary Path (Optional, e.g. C:\\bin\\mysqldump.exe)"
+		case 7:
+			t.Placeholder = "Output Directory (Optional, default: current directory)"
 		}
 
 		inputs[i] = t
 	}
 
-	// Spinner
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = spinnerStyle
@@ -102,9 +108,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
+		case "q":
+			// Chỉ quit ở màn hình không có text input để tránh chặn gõ chữ "q"
+			if m.state == stateSelectDB || m.state == stateResult {
+				m.quitting = true
+				return m, tea.Quit
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -121,6 +133,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateBackingUp(msg)
 	case stateResult:
 		return m.updateResult(msg)
+	case stateEmail:
+		return m.updateEmail(msg)
 	}
 
 	return m, nil
@@ -140,6 +154,8 @@ func (m Model) View() string {
 		return m.viewBackingUp()
 	case stateResult:
 		return m.viewResult()
+	case stateEmail:
+		return m.emailModal.View()
 	}
 
 	return "Unknown state"

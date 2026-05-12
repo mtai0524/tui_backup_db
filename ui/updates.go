@@ -3,8 +3,11 @@ package ui
 import (
 	"bakdb/backup"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// ── Select DB ─────────────────────────────────────────────────────────────────
 
 func (m Model) updateSelectDB(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -14,7 +17,6 @@ func (m Model) updateSelectDB(msg tea.Msg) (Model, tea.Cmd) {
 			if ok {
 				m.dbType = i.title
 				m.state = stateEnterDetails
-				// Update port based on selection
 				if m.dbType == "MySQL" {
 					m.inputs[1].SetValue("3306")
 				} else if m.dbType == "PostgreSQL" {
@@ -32,6 +34,8 @@ func (m Model) updateSelectDB(msg tea.Msg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
+// ── Enter Details ─────────────────────────────────────────────────────────────
+
 func (m Model) updateEnterDetails(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -39,13 +43,11 @@ func (m Model) updateEnterDetails(msg tea.Msg) (Model, tea.Cmd) {
 		case "tab", "shift+tab", "enter", "up", "down":
 			s := msg.String()
 
-			// Did the user press enter on the submit button?
 			if s == "enter" && m.focusIndex == len(m.inputs) {
 				m.state = stateBackingUp
 				return m, tea.Batch(m.spinner.Tick, m.startBackupCmd())
 			}
 
-			// Cycle indexes
 			if s == "up" || s == "shift+tab" {
 				m.focusIndex--
 			} else {
@@ -61,13 +63,11 @@ func (m Model) updateEnterDetails(msg tea.Msg) (Model, tea.Cmd) {
 			cmds := make([]tea.Cmd, len(m.inputs))
 			for i := 0; i <= len(m.inputs)-1; i++ {
 				if i == m.focusIndex {
-					// Set focused state
 					cmds[i] = m.inputs[i].Focus()
 					m.inputs[i].PromptStyle = focusedStyle
 					m.inputs[i].TextStyle = focusedStyle
 					continue
 				}
-				// Remove focused state
 				m.inputs[i].Blur()
 				m.inputs[i].PromptStyle = noStyle
 				m.inputs[i].TextStyle = noStyle
@@ -77,22 +77,19 @@ func (m Model) updateEnterDetails(msg tea.Msg) (Model, tea.Cmd) {
 		}
 	}
 
-	// Handle character input and blinking
 	cmd := m.updateInputs(msg)
-
 	return m, cmd
 }
 
 func (m *Model) updateInputs(msg tea.Msg) tea.Cmd {
 	cmds := make([]tea.Cmd, len(m.inputs))
-
-	// Only update the focused input
 	for i := range m.inputs {
 		m.inputs[i], cmds[i] = m.inputs[i].Update(msg)
 	}
-
 	return tea.Batch(cmds...)
 }
+
+// ── Backing Up ────────────────────────────────────────────────────────────────
 
 func (m Model) updateBackingUp(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -111,15 +108,48 @@ func (m Model) updateBackingUp(msg tea.Msg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
+// ── Result ────────────────────────────────────────────────────────────────────
+
 func (m Model) updateResult(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		if msg.String() == "r" {
+		switch msg.String() {
+		case "r":
 			return InitialModel(), nil
+		case "e":
+			if m.err == nil && m.message != "" {
+				m.emailModal = NewEmailModal(m.message)
+				m.state = stateEmail
+				return m, textinput.Blink
+			}
 		}
 	}
 	return m, nil
 }
+
+// ── Email Modal ───────────────────────────────────────────────────────────────
+
+func (m Model) updateEmail(msg tea.Msg) (Model, tea.Cmd) {
+	if sent, ok := msg.(EmailSentMsg); ok {
+		if sent.Err == nil {
+			m.state = stateResult
+			m.emailModal.Active = false
+		}
+		return m, nil
+	}
+
+	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "esc" {
+		m.state = stateResult
+		m.emailModal.Active = false
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.emailModal, cmd = m.emailModal.Update(msg)
+	return m, cmd
+}
+
+// ── Backup Command ────────────────────────────────────────────────────────────
 
 type backupFinishedMsg struct {
 	path string
@@ -137,12 +167,9 @@ func (m Model) startBackupCmd() tea.Cmd {
 			Type:       m.dbType,
 			ConnString: m.inputs[5].Value(),
 			BinaryPath: m.inputs[6].Value(),
+			OutputDir:  m.inputs[7].Value(), // index 7: output directory
 		}
-
 		path, err := backup.ExecuteBackup(cfg)
-		return backupFinishedMsg{
-			path: path,
-			err:  err,
-		}
+		return backupFinishedMsg{path: path, err: err}
 	}
 }
