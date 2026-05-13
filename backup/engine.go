@@ -446,8 +446,16 @@ func writeSQLComment(f *os.File, msg string) {
 
 // runSQLCmd thực thi sqlcmd và trả về stdout đã làm sạch. Stderr/output đầy đủ
 // được trả về kèm error nếu thất bại để dễ debug.
+//
+// Dùng env vars SQLCMDMAXVARTYPEWIDTH/SQLCMDMAXFIXEDTYPEWIDTH = 0 thay cho
+// flag -y/-Y 0, vì go-sqlcmd (cross-platform mới của Microsoft) coi -h và
+// -y/-Y là mutually-exclusive ở flag level. Env var không bị check đó.
 func runSQLCmd(bin string, args []string) (string, error) {
 	cmd := exec.Command(bin, args...)
+	cmd.Env = append(os.Environ(),
+		"SQLCMDMAXVARTYPEWIDTH=0",
+		"SQLCMDMAXFIXEDTYPEWIDTH=0",
+	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("%w\nCommand: %s %s\nOutput: %s",
@@ -496,7 +504,6 @@ func getSQLServerTables(bin, host, port, user, password, database string) ([]str
 		"-d", database,
 		"-Q", query,
 		"-h", "-1", // không in header
-		"-W",       // trim trailing spaces
 		"-s", "|", // dùng | làm separator (an toàn hơn comma)
 	)
 	out, err := runSQLCmd(bin, args)
@@ -565,7 +572,7 @@ WHERE c.object_id = OBJECT_ID('[%s].[%s]')
 ORDER BY c.column_id;`, sch, tbl)
 
 	args := append(buildSQLServerBaseArgs(host, port, user, password),
-		"-d", database, "-Q", query, "-h", "-1", "-y", "0", "-Y", "0",
+		"-d", database, "-Q", query, "-h", "-1",
 	)
 	out, err := runSQLCmd(bin, args)
 	if err != nil {
@@ -609,7 +616,7 @@ WHERE i.is_primary_key = 1
 ORDER BY ic.key_ordinal;`, sch, tbl)
 
 	args := append(buildSQLServerBaseArgs(host, port, user, password),
-		"-d", database, "-Q", query, "-h", "-1", "-W",
+		"-d", database, "-Q", query, "-h", "-1",
 	)
 	out, err := runSQLCmd(bin, args)
 	if err != nil {
@@ -645,7 +652,7 @@ WHERE c.object_id = OBJECT_ID('[%s].[%s]')
 ORDER BY c.column_id;`, sch, tbl)
 
 	args := append(buildSQLServerBaseArgs(host, port, user, password),
-		"-d", database, "-Q", query, "-h", "-1", "-y", "0", "-Y", "0",
+		"-d", database, "-Q", query, "-h", "-1",
 	)
 	out, err := runSQLCmd(bin, args)
 	if err != nil {
@@ -889,8 +896,6 @@ func exportSQLServerTable(bin, host, port, user, password, database, table strin
 		"-d", database,
 		"-Q", selectQuery,
 		"-h", "-1",
-		"-y", "0",
-		"-Y", "0",
 	)
 	dataOut, err := runSQLCmd(bin, dataArgs)
 	if err != nil {
