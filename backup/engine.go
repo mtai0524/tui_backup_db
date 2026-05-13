@@ -465,10 +465,7 @@ func backupSQLServerToScript(bin, host, port, user, password, database, outFile 
 	}
 	defer f.Close()
 
-	header := fmt.Sprintf(
-		"-- SQL Server backup\n-- Database: %s\n-- Generated: %s\n-- Host: %s\nUSE [%s];\nGO\n\n",
-		database, time.Now().Format("2006-01-02 15:04:05"), host, database,
-	)
+	header := fmt.Sprintf("USE [%s]\nGO\n", database)
 	if _, err := f.WriteString(header); err != nil {
 		return fmt.Errorf("cannot write file header: %w", err)
 	}
@@ -531,6 +528,20 @@ type sqlServerColumn struct {
 	increment  string
 }
 
+// sqlServerPK describes a table's primary key.
+type sqlServerPK struct {
+	name      string   // actual constraint name from sys.indexes
+	clustered bool     // true if CLUSTERED, false if NONCLUSTERED
+	columns   []string // ordered key columns
+}
+
+// sqlServerDefault describes one DEFAULT constraint on a column.
+type sqlServerDefault struct {
+	constraintName string
+	columnName     string
+	definition     string // includes parentheses, e.g. "(getdate())"
+}
+
 // getSQLServerColumns đọc metadata cột (bỏ cột computed) từ sys.columns.
 func getSQLServerColumns(bin, host, port, user, password, database, schema, name string) ([]sqlServerColumn, error) {
 	sch := strings.ReplaceAll(schema, "'", "''")
@@ -583,12 +594,13 @@ ORDER BY c.column_id;`, sch, tbl)
 	return cols, nil
 }
 
-// getSQLServerPKColumns trả về danh sách cột (theo thứ tự) thuộc primary key.
-func getSQLServerPKColumns(bin, host, port, user, password, database, schema, name string) ([]string, error) {
+// getSQLServerPK trả về primary key (tên constraint, clustered/nonclustered,
+// danh sách cột theo thứ tự key_ordinal).
+func getSQLServerPK(bin, host, port, user, password, database, schema, name string) (sqlServerPK, error) {
 	sch := strings.ReplaceAll(schema, "'", "''")
 	tbl := strings.ReplaceAll(name, "'", "''")
 	query := fmt.Sprintf(`SET NOCOUNT ON;
-SELECT c.name
+SELECT i.name + '|' + i.type_desc + '|' + c.name
 FROM sys.indexes i
 JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
 JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
@@ -601,18 +613,32 @@ ORDER BY ic.key_ordinal;`, sch, tbl)
 	)
 	out, err := runSQLCmd(bin, args)
 	if err != nil {
-		return nil, err
+		return sqlServerPK{}, err
 	}
-	return cleanSQLCmdOutput(out), nil
+
+	var pk sqlServerPK
+	for _, line := range cleanSQLCmdOutput(out) {
+		parts := strings.SplitN(line, "|", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		if pk.name == "" {
+			pk.name = parts[0]
+			pk.clustered = strings.EqualFold(parts[1], "CLUSTERED")
+		}
+		pk.columns = append(pk.columns, parts[2])
+	}
+	return pk, nil
 }
 
-// getSQLServerDefaults trả về map column_name → DEFAULT constraint definition.
-func getSQLServerDefaults(bin, host, port, user, password, database, schema, name string) (map[string]string, error) {
+// getSQLServerDefaults trả về danh sách DEFAULT constraint của một table,
+// theo thứ tự column_id. Mỗi entry gồm tên constraint, tên cột và definition.
+func getSQLServerDefaults(bin, host, port, user, password, database, schema, name string) ([]sqlServerDefault, error) {
 	sch := strings.ReplaceAll(schema, "'", "''")
 	tbl := strings.ReplaceAll(name, "'", "''")
 	// Dùng separator '~|~' để giảm khả năng đụng độ với ký tự trong definition.
 	query := fmt.Sprintf(`SET NOCOUNT ON;
-SELECT c.name + '~|~' + dc.definition
+SELECT c.name + '~|~' + dc.name + '~|~' + dc.definition
 FROM sys.columns c
 JOIN sys.default_constraints dc ON c.default_object_id = dc.object_id
 WHERE c.object_id = OBJECT_ID('[%s].[%s]')
@@ -626,58 +652,82 @@ ORDER BY c.column_id;`, sch, tbl)
 		return nil, err
 	}
 
-	defaults := map[string]string{}
+	var defaults []sqlServerDefault
 	for _, line := range cleanSQLCmdOutput(out) {
-		p := strings.SplitN(line, "~|~", 2)
-		if len(p) != 2 {
+		p := strings.SplitN(line, "~|~", 3)
+		if len(p) != 3 {
 			continue
 		}
-		defaults[p[0]] = p[1]
+		defaults = append(defaults, sqlServerDefault{
+			columnName:     p[0],
+			constraintName: p[1],
+			definition:     p[2],
+		})
 	}
 	return defaults, nil
 }
 
-// renderSQLServerType ghép tên type với độ dài/precision/scale phù hợp.
+// renderSQLServerType ghép tên type với độ dài/precision/scale phù hợp,
+// bọc type name trong [] theo style SSMS Generate Scripts.
 func renderSQLServerType(c sqlServerColumn) string {
 	t := c.typeName
 	switch t {
 	case "varchar", "char", "varbinary", "binary":
 		if c.maxLength == -1 {
-			return fmt.Sprintf("%s(MAX)", t)
+			return fmt.Sprintf("[%s](max)", t)
 		}
-		return fmt.Sprintf("%s(%d)", t, c.maxLength)
+		return fmt.Sprintf("[%s](%d)", t, c.maxLength)
 	case "nvarchar", "nchar":
 		if c.maxLength == -1 {
-			return fmt.Sprintf("%s(MAX)", t)
+			return fmt.Sprintf("[%s](max)", t)
 		}
-		return fmt.Sprintf("%s(%d)", t, c.maxLength/2)
+		return fmt.Sprintf("[%s](%d)", t, c.maxLength/2)
 	case "decimal", "numeric":
-		return fmt.Sprintf("%s(%d,%d)", t, c.precision, c.scale)
+		return fmt.Sprintf("[%s](%d, %d)", t, c.precision, c.scale)
 	case "datetime2", "time", "datetimeoffset":
-		return fmt.Sprintf("%s(%d)", t, c.scale)
+		return fmt.Sprintf("[%s](%d)", t, c.scale)
 	case "float":
 		if c.precision != 0 && c.precision != 53 {
-			return fmt.Sprintf("float(%d)", c.precision)
+			return fmt.Sprintf("[float](%d)", c.precision)
 		}
-		return "float"
+		return "[float]"
 	default:
-		return t
+		return fmt.Sprintf("[%s]", t)
 	}
 }
 
-// writeCreateTable phát sinh CREATE TABLE (kèm IDENTITY, DEFAULT, NULL/NOT NULL,
-// PRIMARY KEY) cho một table. Có thêm DROP IF EXISTS để script idempotent.
-func writeCreateTable(f *os.File, schema, name string, cols []sqlServerColumn, pkCols []string, defaults map[string]string) error {
-	if _, err := f.WriteString(fmt.Sprintf(
-		"IF OBJECT_ID('[%s].[%s]', 'U') IS NOT NULL DROP TABLE [%s].[%s];\nGO\n",
-		schema, name, schema, name,
-	)); err != nil {
+// tableHasLOB returns true if any column is a LOB type that requires
+// TEXTIMAGE_ON to be specified on the table.
+func tableHasLOB(cols []sqlServerColumn) bool {
+	for _, c := range cols {
+		switch c.typeName {
+		case "text", "ntext", "image", "xml":
+			return true
+		case "varchar", "nvarchar", "varbinary":
+			if c.maxLength == -1 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// writeCreateTable phát sinh object header (SET ANSI_NULLS, SET QUOTED_IDENTIFIER),
+// CREATE TABLE (kèm IDENTITY, NULL/NOT NULL, PRIMARY KEY CLUSTERED + WITH options)
+// theo style SSMS Generate Scripts.
+func writeCreateTable(f *os.File, schema, name string, cols []sqlServerColumn, pk sqlServerPK) error {
+	scriptDate := time.Now().Format("1/2/2006 15:04:05")
+	header := fmt.Sprintf(
+		"/****** Object:  Table [%s].[%s]    Script Date: %s ******/\nSET ANSI_NULLS ON\nGO\nSET QUOTED_IDENTIFIER ON\nGO\n",
+		schema, name, scriptDate,
+	)
+	if _, err := f.WriteString(header); err != nil {
 		return err
 	}
 
 	var lines []string
 	for _, c := range cols {
-		parts := []string{fmt.Sprintf("  [%s] %s", c.name, renderSQLServerType(c))}
+		line := fmt.Sprintf("    [%s] %s", c.name, renderSQLServerType(c))
 		if c.isIdentity {
 			seed := c.seed
 			if seed == "" {
@@ -687,37 +737,66 @@ func writeCreateTable(f *os.File, schema, name string, cols []sqlServerColumn, p
 			if inc == "" {
 				inc = "1"
 			}
-			parts = append(parts, fmt.Sprintf("IDENTITY(%s,%s)", seed, inc))
-		}
-		if def, ok := defaults[c.name]; ok && def != "" {
-			parts = append(parts, fmt.Sprintf("DEFAULT %s", def))
+			line += fmt.Sprintf(" IDENTITY(%s,%s)", seed, inc)
 		}
 		if c.nullable {
-			parts = append(parts, "NULL")
+			line += " NULL"
 		} else {
-			parts = append(parts, "NOT NULL")
+			line += " NOT NULL"
 		}
-		lines = append(lines, strings.Join(parts, " "))
+		lines = append(lines, line)
 	}
-	if len(pkCols) > 0 {
-		quoted := make([]string, 0, len(pkCols))
-		for _, p := range pkCols {
-			quoted = append(quoted, fmt.Sprintf("[%s]", p))
+	if len(pk.columns) > 0 {
+		pkName := pk.name
+		if pkName == "" {
+			pkName = fmt.Sprintf("PK_%s", name)
+		}
+		clustered := "CLUSTERED"
+		if !pk.clustered {
+			clustered = "NONCLUSTERED"
+		}
+		var pkCols []string
+		for _, p := range pk.columns {
+			pkCols = append(pkCols, fmt.Sprintf("    [%s] ASC", p))
 		}
 		lines = append(lines, fmt.Sprintf(
-			"  CONSTRAINT [PK_%s_%s] PRIMARY KEY (%s)",
-			schema, name, strings.Join(quoted, ", "),
+			" CONSTRAINT [%s] PRIMARY KEY %s \n(\n%s\n)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]",
+			pkName, clustered, strings.Join(pkCols, ",\n"),
 		))
 	}
 
-	body := fmt.Sprintf("CREATE TABLE [%s].[%s] (\n%s\n);\nGO\n",
-		schema, name, strings.Join(lines, ",\n"),
+	tableSuffix := " ON [PRIMARY]"
+	if tableHasLOB(cols) {
+		tableSuffix = " ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]"
+	}
+	body := fmt.Sprintf("CREATE TABLE [%s].[%s](\n%s\n)%s\nGO\n",
+		schema, name, strings.Join(lines, ",\n"), tableSuffix,
 	)
 	_, err := f.WriteString(body)
 	return err
 }
 
-// exportSQLServerTable phát sinh CREATE TABLE + INSERTs cho một table, ghi vào f.
+// writeDefaultConstraints emits each DEFAULT as an ALTER TABLE ... ADD CONSTRAINT
+// statement (SSMS style — DEFAULTs are NOT inlined in CREATE TABLE).
+func writeDefaultConstraints(f *os.File, schema, name string, defaults []sqlServerDefault) error {
+	for _, d := range defaults {
+		cname := d.constraintName
+		if cname == "" {
+			cname = fmt.Sprintf("DF_%s_%s", name, d.columnName)
+		}
+		line := fmt.Sprintf(
+			"ALTER TABLE [%s].[%s] ADD  CONSTRAINT [%s]  DEFAULT %s FOR [%s]\nGO\n",
+			schema, name, cname, d.definition, d.columnName,
+		)
+		if _, err := f.WriteString(line); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// exportSQLServerTable phát sinh CREATE TABLE + DEFAULTs + INSERTs cho một table,
+// theo style SSMS Generate Scripts.
 func exportSQLServerTable(bin, host, port, user, password, database, table string, f *os.File) error {
 	parts := strings.SplitN(table, ".", 2)
 	if len(parts) != 2 {
@@ -733,7 +812,7 @@ func exportSQLServerTable(bin, host, port, user, password, database, table strin
 		return nil
 	}
 
-	pkCols, err := getSQLServerPKColumns(bin, host, port, user, password, database, schema, name)
+	pk, err := getSQLServerPK(bin, host, port, user, password, database, schema, name)
 	if err != nil {
 		return fmt.Errorf("get primary key: %w", err)
 	}
@@ -742,25 +821,14 @@ func exportSQLServerTable(bin, host, port, user, password, database, table strin
 		return fmt.Errorf("get defaults: %w", err)
 	}
 
-	if _, err := f.WriteString(fmt.Sprintf("-- Table: %s\n", table)); err != nil {
-		return err
-	}
-	if err := writeCreateTable(f, schema, name, cols, pkCols, defaults); err != nil {
+	if err := writeCreateTable(f, schema, name, cols, pk); err != nil {
 		return fmt.Errorf("write CREATE TABLE: %w", err)
 	}
-
-	hasIdentity := false
-	for _, c := range cols {
-		if c.isIdentity {
-			hasIdentity = true
-			break
-		}
-	}
-	if hasIdentity {
-		_, _ = f.WriteString(fmt.Sprintf("SET IDENTITY_INSERT [%s].[%s] ON;\nGO\n", schema, name))
+	if err := writeDefaultConstraints(f, schema, name, defaults); err != nil {
+		return fmt.Errorf("write DEFAULTs: %w", err)
 	}
 
-	// Build SELECT expression: convert mỗi cột thành literal SQL phù hợp.
+	// Build SELECT expression: convert mỗi cột thành literal SQL phù hợp với SSMS.
 	var selectExprs []string
 	for _, c := range cols {
 		colRef := fmt.Sprintf("[%s]", c.name)
@@ -769,15 +837,29 @@ func exportSQLServerTable(bin, host, port, user, password, database, table strin
 		case "int", "bigint", "smallint", "tinyint", "bit",
 			"decimal", "numeric", "money", "smallmoney", "float", "real":
 			expr = fmt.Sprintf("ISNULL(CONVERT(NVARCHAR(MAX), %s), 'NULL')", colRef)
-		case "datetime", "smalldatetime", "datetime2", "date", "time", "datetimeoffset":
-			expr = fmt.Sprintf("ISNULL(''''+CONVERT(NVARCHAR(MAX), %s, 121)+'''', 'NULL')", colRef)
+		case "datetime", "smalldatetime":
+			expr = fmt.Sprintf("ISNULL('CAST(N'''+CONVERT(NVARCHAR(MAX), %s, 121)+''' AS DateTime)', 'NULL')", colRef)
+		case "datetime2":
+			expr = fmt.Sprintf("ISNULL('CAST(N'''+CONVERT(NVARCHAR(MAX), %s, 121)+''' AS DateTime2)', 'NULL')", colRef)
+		case "date":
+			expr = fmt.Sprintf("ISNULL('CAST(N'''+CONVERT(NVARCHAR(MAX), %s, 23)+''' AS Date)', 'NULL')", colRef)
+		case "time":
+			expr = fmt.Sprintf("ISNULL('CAST(N'''+CONVERT(NVARCHAR(MAX), %s)+''' AS Time)', 'NULL')", colRef)
+		case "datetimeoffset":
+			expr = fmt.Sprintf("ISNULL('CAST(N'''+CONVERT(NVARCHAR(MAX), %s, 121)+''' AS DateTimeOffset)', 'NULL')", colRef)
 		case "uniqueidentifier":
-			expr = fmt.Sprintf("ISNULL(''''+CONVERT(NVARCHAR(MAX), %s)+'''', 'NULL')", colRef)
+			expr = fmt.Sprintf("ISNULL('N'''+CONVERT(NVARCHAR(MAX), %s)+'''', 'NULL')", colRef)
 		case "varbinary", "binary", "image":
 			expr = fmt.Sprintf("ISNULL('0x'+CONVERT(NVARCHAR(MAX), %s, 2), 'NULL')", colRef)
+		case "nvarchar", "nchar", "ntext":
+			// N'value' — Unicode literal prefix, escape single quotes, drop CR/LF
+			// to keep each INSERT on a single output line.
+			expr = fmt.Sprintf(
+				"ISNULL('N'''+REPLACE(REPLACE(REPLACE(CONVERT(NVARCHAR(MAX), %s), '''', ''''''), CHAR(13), ' '), CHAR(10), ' ')+'''', 'NULL')",
+				colRef,
+			)
 		default:
-			// String types — escape single quotes, drop CR/LF to keep each
-			// INSERT statement on a single output line.
+			// varchar, char, text, xml — 'value' không có N prefix.
 			expr = fmt.Sprintf(
 				"ISNULL(''''+REPLACE(REPLACE(REPLACE(CONVERT(NVARCHAR(MAX), %s), '''', ''''''), CHAR(13), ' '), CHAR(10), ' ')+'''', 'NULL')",
 				colRef,
@@ -791,13 +873,13 @@ func exportSQLServerTable(bin, host, port, user, password, database, table strin
 		colListForInsert = append(colListForInsert, fmt.Sprintf("[%s]", c.name))
 	}
 
-	prefix := fmt.Sprintf("INSERT INTO [%s].[%s] (%s) VALUES (",
-		schema, name, strings.Join(colListForInsert, ","))
+	// SSMS style: INSERT [schema].[table] (...) VALUES (...) — không có INTO, không semicolon.
+	prefix := fmt.Sprintf("INSERT [%s].[%s] (%s) VALUES (",
+		schema, name, strings.Join(colListForInsert, ", "))
 
-	// Nối các expression bằng + ',' + để output có dạng "a,b,c".
-	valueExpr := strings.Join(selectExprs, "+','+")
+	valueExpr := strings.Join(selectExprs, "+', '+")
 	selectQuery := fmt.Sprintf(
-		"SET NOCOUNT ON; SELECT '%s'+%s+');' FROM [%s].[%s];",
+		"SET NOCOUNT ON; SELECT '%s'+%s+')' FROM [%s].[%s];",
 		strings.ReplaceAll(prefix, "'", "''"),
 		valueExpr,
 		schema, name,
@@ -808,23 +890,38 @@ func exportSQLServerTable(bin, host, port, user, password, database, table strin
 		"-Q", selectQuery,
 		"-h", "-1",
 		"-W",
-		"-y", "0", // unlimited variable-length column width
-		"-Y", "0", // unlimited fixed-length column width
+		"-y", "0",
+		"-Y", "0",
 	)
 	dataOut, err := runSQLCmd(bin, dataArgs)
 	if err != nil {
 		return fmt.Errorf("export data: %w", err)
 	}
 
-	for _, line := range cleanSQLCmdOutput(dataOut) {
+	rows := cleanSQLCmdOutput(dataOut)
+	if len(rows) == 0 {
+		return nil
+	}
+
+	hasIdentity := false
+	for _, c := range cols {
+		if c.isIdentity {
+			hasIdentity = true
+			break
+		}
+	}
+	if hasIdentity {
+		_, _ = f.WriteString(fmt.Sprintf("SET IDENTITY_INSERT [%s].[%s] ON \nGO\n", schema, name))
+	}
+	for _, line := range rows {
 		if _, werr := f.WriteString(line + "\n"); werr != nil {
 			return fmt.Errorf("write row: %w", werr)
 		}
 	}
+	_, _ = f.WriteString("GO\n")
 	if hasIdentity {
-		_, _ = f.WriteString(fmt.Sprintf("SET IDENTITY_INSERT [%s].[%s] OFF;\nGO\n", schema, name))
+		_, _ = f.WriteString(fmt.Sprintf("SET IDENTITY_INSERT [%s].[%s] OFF\nGO\n", schema, name))
 	}
-	_, _ = f.WriteString("GO\n\n")
 	return nil
 }
 
