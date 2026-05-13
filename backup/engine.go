@@ -565,7 +565,7 @@ WHERE c.object_id = OBJECT_ID('[%s].[%s]')
 ORDER BY c.column_id;`, sch, tbl)
 
 	args := append(buildSQLServerBaseArgs(host, port, user, password),
-		"-d", database, "-Q", query, "-h", "-1", "-W", "-y", "0", "-Y", "0",
+		"-d", database, "-Q", query, "-h", "-1", "-y", "0", "-Y", "0",
 	)
 	out, err := runSQLCmd(bin, args)
 	if err != nil {
@@ -645,7 +645,7 @@ WHERE c.object_id = OBJECT_ID('[%s].[%s]')
 ORDER BY c.column_id;`, sch, tbl)
 
 	args := append(buildSQLServerBaseArgs(host, port, user, password),
-		"-d", database, "-Q", query, "-h", "-1", "-W", "-y", "0", "-Y", "0",
+		"-d", database, "-Q", query, "-h", "-1", "-y", "0", "-Y", "0",
 	)
 	out, err := runSQLCmd(bin, args)
 	if err != nil {
@@ -889,7 +889,6 @@ func exportSQLServerTable(bin, host, port, user, password, database, table strin
 		"-d", database,
 		"-Q", selectQuery,
 		"-h", "-1",
-		"-W",
 		"-y", "0",
 		"-Y", "0",
 	)
