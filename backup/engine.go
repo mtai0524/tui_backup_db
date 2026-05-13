@@ -422,6 +422,28 @@ func cleanSQLCmdOutput(raw string) []string {
 	return out
 }
 
+// sanitizeSQLCmdArgs returns a copy of args with secret values (e.g. the value
+// after -P) replaced with "***", so the args can safely appear in error
+// messages or .sql file comments.
+func sanitizeSQLCmdArgs(args []string) []string {
+	out := make([]string, len(args))
+	copy(out, args)
+	for i := 0; i < len(out)-1; i++ {
+		if out[i] == "-P" {
+			out[i+1] = "***"
+		}
+	}
+	return out
+}
+
+// writeSQLComment writes msg as a SQL comment block, prefixing every line with
+// "-- " so a multi-line message never breaks the surrounding script.
+func writeSQLComment(f *os.File, msg string) {
+	for _, line := range strings.Split(strings.TrimRight(msg, "\n"), "\n") {
+		_, _ = f.WriteString("-- " + line + "\n")
+	}
+}
+
 // runSQLCmd thực thi sqlcmd và trả về stdout đã làm sạch. Stderr/output đầy đủ
 // được trả về kèm error nếu thất bại để dễ debug.
 func runSQLCmd(bin string, args []string) (string, error) {
@@ -429,7 +451,7 @@ func runSQLCmd(bin string, args []string) (string, error) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("%w\nCommand: %s %s\nOutput: %s",
-			err, bin, strings.Join(args, " "), string(out))
+			err, bin, strings.Join(sanitizeSQLCmdArgs(args), " "), string(out))
 	}
 	return string(out), nil
 }
@@ -462,7 +484,8 @@ func backupSQLServerToScript(bin, host, port, user, password, database, outFile 
 
 	for _, table := range tables {
 		if err := exportSQLServerTable(bin, host, port, user, password, database, table, f); err != nil {
-			_, _ = f.WriteString(fmt.Sprintf("-- WARNING: could not export table %s: %v\n\n", table, err))
+			writeSQLComment(f, fmt.Sprintf("WARNING: could not export table %s: %v", table, err))
+			_, _ = f.WriteString("\n")
 		}
 	}
 
