@@ -1,5 +1,36 @@
+# Environment
 .env
 .env.local
+.env.*.local
+
+# Build artifacts
 bakdb
+bakdb.exe
+build/
+releases/
+dist/
+
+# Backup files
 *.sql
 *.bak
+*.gz
+*.zip
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Test coverage
+*.out
+coverage.txt

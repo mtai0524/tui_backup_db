@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=bakdb
+Comment=Database Backup Manager
+Exec=bakdb
+Icon=dialog-information
+Categories=Utility;Database;System;
+Terminal=true
+StartupNotify=false
+
+# Additional metadata
+Keywords=backup;database;mysql;postgresql;sqlserver;
+MimeType=application/sql;
