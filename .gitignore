@@ -1,3 +1,5 @@
 .env
 .env.local
 bakdb
+*.sql
+*.bak
