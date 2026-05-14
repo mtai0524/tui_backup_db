@@ -53,8 +53,8 @@ func InitialModel() Model {
 	l := list.New(items, list.NewDefaultDelegate(), 0, 0)
 	l.Title = "Select Database Type"
 
-	// 8 input fields: index 0-6 như cũ, index 7 là Output Directory
-	inputs := make([]textinput.Model, 8)
+	// 9 input fields: index 0-7 như cũ, index 8 là Backup Format (SQL Server only)
+	inputs := make([]textinput.Model, 9)
 	var t textinput.Model
 	for i := range inputs {
 		t = textinput.New()
@@ -88,6 +88,8 @@ func InitialModel() Model {
 			t.Placeholder = "Tool Binary Path (Optional, e.g. C:\\bin\\mysqldump.exe)"
 		case 7:
 			t.Placeholder = "Output Directory (Optional, default: current directory)"
+		case 8:
+			t.Placeholder = "Backup Format for SQL Server: .bak or .sql (Optional, default: auto)"
 		}
 
 		inputs[i] = t
@@ -141,6 +143,7 @@ func applyDefaults(inputs []textinput.Model, d config.Defaults) {
 	set(5, d.ConnString)
 	set(6, d.BinaryPath)
 	set(7, d.OutputDir)
+	set(8, d.BackupFormat)
 }
 
 func (m Model) Init() tea.Cmd {

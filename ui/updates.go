@@ -47,7 +47,13 @@ func (m Model) updateEnterDetails(msg tea.Msg) (Model, tea.Cmd) {
 		case "tab", "shift+tab", "enter", "up", "down":
 			s := msg.String()
 
-			if s == "enter" && m.focusIndex == len(m.inputs) {
+			// Calculate max focus index based on DB type
+			maxFocusIdx := 7 // Always show fields 0-7
+			if m.dbType == "SQL Server" {
+				maxFocusIdx = 8 // SQL Server also shows backup format (field 8)
+			}
+
+			if s == "enter" && m.focusIndex == maxFocusIdx+1 {
 				m.state = stateBackingUp
 				return m, tea.Batch(m.spinner.Tick, m.startBackupCmd())
 			}
@@ -58,10 +64,10 @@ func (m Model) updateEnterDetails(msg tea.Msg) (Model, tea.Cmd) {
 				m.focusIndex++
 			}
 
-			if m.focusIndex > len(m.inputs) {
+			if m.focusIndex > maxFocusIdx+1 {
 				m.focusIndex = 0
 			} else if m.focusIndex < 0 {
-				m.focusIndex = len(m.inputs)
+				m.focusIndex = maxFocusIdx + 1
 			}
 
 			cmds := make([]tea.Cmd, len(m.inputs))
@@ -163,15 +169,16 @@ type backupFinishedMsg struct {
 func (m Model) startBackupCmd() tea.Cmd {
 	return func() tea.Msg {
 		cfg := backup.Config{
-			Host:       m.inputs[0].Value(),
-			Port:       m.inputs[1].Value(),
-			User:       m.inputs[2].Value(),
-			Password:   m.inputs[3].Value(),
-			Database:   m.inputs[4].Value(),
-			Type:       m.dbType,
-			ConnString: m.inputs[5].Value(),
-			BinaryPath: m.inputs[6].Value(),
-			OutputDir:  m.inputs[7].Value(), // index 7: output directory
+			Host:         m.inputs[0].Value(),
+			Port:         m.inputs[1].Value(),
+			User:         m.inputs[2].Value(),
+			Password:     m.inputs[3].Value(),
+			Database:     m.inputs[4].Value(),
+			Type:         m.dbType,
+			ConnString:   m.inputs[5].Value(),
+			BinaryPath:   m.inputs[6].Value(),
+			OutputDir:    m.inputs[7].Value(),
+			BackupFormat: m.inputs[8].Value(),
 		}
 		path, err := backup.ExecuteBackup(cfg)
 		return backupFinishedMsg{path: path, err: err}

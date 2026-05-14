@@ -18,6 +18,7 @@ type Defaults struct {
 	ConnString string
 	BinaryPath string
 	OutputDir  string
+	BackupFormat string
 
 	// Email modal
 	EmailFrom        string
@@ -38,6 +39,7 @@ const (
 	envConnString = "BAKDB_CONN_STRING"
 	envBinaryPath = "BAKDB_BINARY_PATH"
 	envOutputDir  = "BAKDB_OUTPUT_DIR"
+	envBackupFormat = "BAKDB_BACKUP_FORMAT"
 	envFile       = "BAKDB_ENV_FILE"
 
 	envEmailFrom    = "BAKDB_EMAIL_FROM"
@@ -63,7 +65,7 @@ func Load() Defaults {
 	}
 	for _, k := range []string{
 		envType, envHost, envPort, envUser, envPassword,
-		envDatabase, envConnString, envBinaryPath, envOutputDir,
+		envDatabase, envConnString, envBinaryPath, envOutputDir, envBackupFormat,
 		envEmailFrom, envEmailAppPass, envEmailTo, envEmailSubject,
 	} {
 		if v, ok := os.LookupEnv(k); ok && v != "" {
@@ -81,6 +83,7 @@ func Load() Defaults {
 		ConnString:       values[envConnString],
 		BinaryPath:       values[envBinaryPath],
 		OutputDir:        values[envOutputDir],
+		BackupFormat:     values[envBackupFormat],
 		EmailFrom:        values[envEmailFrom],
 		EmailAppPassword: values[envEmailAppPass],
 		EmailTo:          values[envEmailTo],

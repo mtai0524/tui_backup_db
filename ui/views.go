@@ -13,14 +13,20 @@ func (m Model) viewEnterDetails() string {
 	b.WriteString(titleStyle.Render(fmt.Sprintf(" Backup %s Database ", m.dbType)))
 	b.WriteString("\n\n")
 
-	for i := range m.inputs {
+	// Show all inputs except backup format (index 8) unless it's SQL Server
+	displayCount := 8
+	if m.dbType == "SQL Server" {
+		displayCount = 9
+	}
+
+	for i := 0; i < displayCount; i++ {
 		b.WriteString(m.inputs[i].View())
-		if i < len(m.inputs)-1 {
+		if i < displayCount-1 {
 			b.WriteRune('\n')
 		}
 	}
 
-	button := "\n\n" + m.renderButton("Start Backup", m.focusIndex == len(m.inputs))
+	button := "\n\n" + m.renderButton("Start Backup", m.focusIndex == displayCount)
 	b.WriteString(button)
 
 	b.WriteString(helpStyle.Render("\n\n (tab/shift+tab: move • enter: next/submit • ctrl+c: quit)"))

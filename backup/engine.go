@@ -11,15 +11,16 @@ import (
 )
 
 type Config struct {
-	Host       string
-	Port       string
-	User       string
-	Password   string
-	Database   string
-	Type       string
-	ConnString string
-	BinaryPath string
-	OutputDir  string
+	Host         string
+	Port         string
+	User         string
+	Password     string
+	Database     string
+	Type         string
+	ConnString   string
+	BinaryPath   string
+	OutputDir    string
+	BackupFormat string
 }
 
 // ── Connection string parsers ─────────────────────────────────────────────────
@@ -377,12 +378,22 @@ func ExecuteBackup(cfg Config) (string, error) {
 			host = "localhost"
 		}
 
-		// Tự động chọn định dạng dựa trên vị trí server:
-		// - Local: dùng .bak (nhanh, đầy đủ, ghi trực tiếp được).
-		// - Remote: dùng .sql (để có thể lưu file tại máy local của người dùng).
-		isLocal := host == "localhost" || host == "127.0.0.1" || host == "." || strings.HasPrefix(host, "(local)")
+		// Determine backup format: user choice > auto-detect
+		format := strings.ToLower(strings.TrimSpace(cfg.BackupFormat))
+		useBak := false
 
-		if isLocal {
+		switch format {
+		case ".bak", "bak":
+			useBak = true
+		case ".sql", "sql":
+			useBak = false
+		default:
+			// Auto-detect: local server = .bak, remote = .sql
+			isLocal := host == "localhost" || host == "127.0.0.1" || host == "." || strings.HasPrefix(host, "(local)")
+			useBak = isLocal
+		}
+
+		if useBak {
 			filename = filepath.Join(absDir, fmt.Sprintf("%s_%s.bak", dbName, timestamp))
 			if err := backupSQLServerToBak(bin, host, port, user, password, cfg.Database, filename); err != nil {
 				return "", err
