@@ -266,7 +266,7 @@ sudo apt-get install -y golang-go git build-essential
 sudo apt-get install -y mysql-client postgresql-client
 
 # Clone and build
-git clone https://github.com/yourusername/bakdb.git
+git clone https://github.com/mtai0524/tui_backup_db.git
 cd bakdb
 chmod +x install.sh
 ./install.sh
@@ -476,4 +476,4 @@ For deployment issues:
 - Check logs: `journalctl -u bakdb -f`
 - Verify configuration: check `.env` file
 - Test connectivity: `ping` database server
-- Report issues: https://github.com/yourusername/bakdb/issues
+- Report issues: https://github.com/mtai0524/tui_backup_db/issues

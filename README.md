@@ -50,7 +50,7 @@ Ensure the following are installed:
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/bakdb.git
+git clone https://github.com/mtai0524/tui_backup_db.git
 cd bakdb
 
 # Run installation script
@@ -68,7 +68,7 @@ This will:
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/bakdb.git
+git clone https://github.com/mtai0524/tui_backup_db.git
 cd bakdb
 
 # Build
@@ -345,5 +345,5 @@ Contributions welcome! Please:
 ## 📞 Support
 
 - 📖 [Documentation](./README.md)
-- 🐛 [Report Issues](https://github.com/yourusername/bakdb/issues)
-- 💡 [Feature Requests](https://github.com/yourusername/bakdb/discussions)
+- 🐛 [Report Issues](https://github.com/mtai0524/tui_backup_db/issues)
+- 💡 [Feature Requests](https://github.com/mtai0524/tui_backup_db/discussions)

@@ -6,7 +6,7 @@
 set -e
 
 APP_NAME="bakdb"
-REPO_URL="https://github.com/yourusername/bakdb"
+REPO_URL="https://github.com/mtai0524/tui_backup_db"
 INSTALL_PATH="/usr/local/bin"
 CONFIG_PATH="${HOME}/.bakdb"
 

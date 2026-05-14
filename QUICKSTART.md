@@ -10,7 +10,7 @@ Get bakdb running in 5 minutes! 🚀
 
 ```bash
 # Clone repo
-git clone https://github.com/yourusername/bakdb.git
+git clone https://github.com/mtai0524/tui_backup_db.git
 cd bakdb
 
 # Run installer
@@ -25,7 +25,7 @@ bakdb
 
 ```bash
 # Clone repo
-git clone https://github.com/yourusername/bakdb.git
+git clone https://github.com/mtai0524/tui_backup_db.git
 cd bakdb
 
 # Build
@@ -192,7 +192,7 @@ sudo yum install mysql
 
 - 📖 Read [README.md](./README.md) for full documentation
 - ⚙️ Check [Configuration](#-configuration) section
-- 🐛 Report issues: https://github.com/yourusername/bakdb/issues
+- 🐛 Report issues: https://github.com/mtai0524/tui_backup_db/issues
 
 ---
 
