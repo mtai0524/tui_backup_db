@@ -105,6 +105,8 @@ func (m Model) updateBackingUp(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case backupFinishedMsg:
 		m.state = stateResult
+		m.databaseName = msg.databaseName
+		m.backupFormat = msg.backupFormat
 		if msg.err != nil {
 			m.err = msg.err
 		} else {
@@ -128,7 +130,7 @@ func (m Model) updateResult(msg tea.Msg) (Model, tea.Cmd) {
 			return InitialModel(), nil
 		case "e":
 			if m.err == nil && m.message != "" {
-				m.emailModal = NewEmailModal(m.message, m.defaults)
+				m.emailModal = NewEmailModal(m.message, m.defaults, m.databaseName, m.backupFormat)
 				m.state = stateEmail
 				return m, textinput.Blink
 			}
@@ -162,25 +164,29 @@ func (m Model) updateEmail(msg tea.Msg) (Model, tea.Cmd) {
 // ── Backup Command ────────────────────────────────────────────────────────────
 
 type backupFinishedMsg struct {
-	path string
-	err  error
+	path         string
+	err          error
+	databaseName string
+	backupFormat string
 }
 
 func (m Model) startBackupCmd() tea.Cmd {
 	return func() tea.Msg {
+		dbName := m.inputs[4].Value()
+		backupFmt := m.inputs[8].Value()
 		cfg := backup.Config{
 			Host:         m.inputs[0].Value(),
 			Port:         m.inputs[1].Value(),
 			User:         m.inputs[2].Value(),
 			Password:     m.inputs[3].Value(),
-			Database:     m.inputs[4].Value(),
+			Database:     dbName,
 			Type:         m.dbType,
 			ConnString:   m.inputs[5].Value(),
 			BinaryPath:   m.inputs[6].Value(),
 			OutputDir:    m.inputs[7].Value(),
-			BackupFormat: m.inputs[8].Value(),
+			BackupFormat: backupFmt,
 		}
 		path, err := backup.ExecuteBackup(cfg)
-		return backupFinishedMsg{path: path, err: err}
+		return backupFinishedMsg{path: path, err: err, databaseName: dbName, backupFormat: backupFmt}
 	}
 }

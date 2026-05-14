@@ -20,17 +20,19 @@ const (
 )
 
 type Model struct {
-	state      state
-	dbType     string
-	list       list.Model
-	inputs     []textinput.Model
-	focusIndex int
-	spinner    spinner.Model
-	err        error
-	message    string
-	quitting   bool
-	emailModal EmailModal
-	defaults   config.Defaults
+	state        state
+	dbType       string
+	list         list.Model
+	inputs       []textinput.Model
+	focusIndex   int
+	spinner      spinner.Model
+	err          error
+	message      string
+	quitting     bool
+	emailModal   EmailModal
+	defaults     config.Defaults
+	databaseName string // Tên database vừa backup (dùng cho email)
+	backupFormat string // Định dạng backup vừa thực hiện
 }
 
 type item struct {

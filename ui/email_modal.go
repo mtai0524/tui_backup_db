@@ -4,6 +4,8 @@ import (
 	"bakdb/config"
 	"bakdb/email"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -77,20 +79,24 @@ type emailSendResultMsg struct {
 //  2. Gọi modal.Update(msg) khi modal.Active == true
 //  3. Render modal.View() chồng lên giao diện chính
 type EmailModal struct {
-	Active      bool
-	backupFile  string // đường dẫn file backup cần đính kèm
-	inputs      [fieldCount]textinput.Model
-	focusedIdx  int
-	sending     bool
-	statusMsg   string
-	statusIsErr bool
+	Active         bool
+	backupFile     string // đường dẫn file backup cần đính kèm
+	databaseName   string
+	backupFormat   string
+	inputs         [fieldCount]textinput.Model
+	focusedIdx     int
+	sending        bool
+	statusMsg      string
+	statusIsErr    bool
 }
 
-// NewEmailModal khởi tạo modal với đường dẫn file backup và defaults từ .env.
-func NewEmailModal(backupFile string, d config.Defaults) EmailModal {
+// NewEmailModal khởi tạo modal với đường dẫn file backup, database name, backup format và defaults từ .env.
+func NewEmailModal(backupFile string, d config.Defaults, databaseName, backupFormat string) EmailModal {
 	m := EmailModal{
-		backupFile: backupFile,
-		Active:     true,
+		backupFile:   backupFile,
+		databaseName: databaseName,
+		backupFormat: backupFormat,
+		Active:       true,
 	}
 
 	placeholders := [fieldCount]string{
@@ -290,14 +296,24 @@ func (m *EmailModal) sendEmail() tea.Cmd {
 	m.sending = true
 	m.statusMsg = ""
 
-	cfg := email.Config{
-		FromAddress: from,
-		AppPassword: appPass,
-		ToAddresses: toList,
-		Subject:     subject,
+	// Lấy thông tin file để truyền vào email
+	backupFile := m.backupFile
+	fileInfo, _ := os.Stat(backupFile)
+	fileSize := int64(0)
+	if fileInfo != nil {
+		fileSize = fileInfo.Size()
 	}
 
-	backupFile := m.backupFile
+	cfg := email.Config{
+		FromAddress:    from,
+		AppPassword:    appPass,
+		ToAddresses:    toList,
+		Subject:        subject,
+		BackupFileName: filepath.Base(backupFile),
+		BackupSize:     fileSize,
+		DatabaseName:   m.databaseName,
+		BackupFormat:   m.backupFormat,
+	}
 
 	return func() tea.Msg {
 		err := email.Send(cfg, backupFile)
