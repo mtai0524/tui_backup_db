@@ -1,4 +1,4 @@
-.PHONY: build install clean help dev release
+.PHONY: build install clean help dev release package
 
 APP_NAME := bakdb
 VERSION := 1.0.0
@@ -24,6 +24,7 @@ help:
 	@echo "  make build        - Build for current platform"
 	@echo "  make dev          - Build and run in development mode"
 	@echo "  make release      - Build for all platforms"
+	@echo "  make package      - Build + zip/tar releases for distribution"
 	@echo "  make install      - Build and install to /usr/local/bin"
 	@echo "  make uninstall    - Remove from /usr/local/bin"
 	@echo "  make clean        - Clean build artifacts"
@@ -113,3 +114,34 @@ windows:
 	@mkdir -p $(BUILD_DIR)
 	GOOS=windows GOARCH=amd64 go build $(LD_FLAGS) -o $(WINDOWS_AMD64)
 	@echo "✅ Windows x86_64: $(WINDOWS_AMD64)"
+
+# Package release binaries into distributable archives (.tar.gz / .zip)
+package: release
+	@echo "📦 Packaging $(APP_NAME) $(VERSION)..."
+	@mkdir -p $(RELEASE_DIR)
+	@for target in linux-amd64 linux-arm64 macos-amd64 macos-arm64; do \
+		stage=$(RELEASE_DIR)/$(APP_NAME)-$(VERSION)-$$target; \
+		rm -rf $$stage; mkdir -p $$stage; \
+		cp $(BUILD_DIR)/$(APP_NAME)-$$target $$stage/$(APP_NAME); \
+		cp README.md .env.example $$stage/; \
+		[ -f CHANGELOG.md ] && cp CHANGELOG.md $$stage/ || true; \
+		tar -czf $(RELEASE_DIR)/$(APP_NAME)-$(VERSION)-$$target.tar.gz -C $(RELEASE_DIR) $(APP_NAME)-$(VERSION)-$$target; \
+		rm -rf $$stage; \
+		echo "✅ $(RELEASE_DIR)/$(APP_NAME)-$(VERSION)-$$target.tar.gz"; \
+	done
+	@stage=$(RELEASE_DIR)/$(APP_NAME)-$(VERSION)-windows-amd64; \
+	rm -rf $$stage; mkdir -p $$stage; \
+	cp $(BUILD_DIR)/$(APP_NAME)-windows-amd64.exe $$stage/$(APP_NAME).exe; \
+	cp README.md .env.example $$stage/; \
+	[ -f CHANGELOG.md ] && cp CHANGELOG.md $$stage/ || true; \
+	( cd $(RELEASE_DIR) && \
+	  if command -v zip >/dev/null 2>&1; then \
+	    zip -qr $(APP_NAME)-$(VERSION)-windows-amd64.zip $(APP_NAME)-$(VERSION)-windows-amd64; \
+	  else \
+	    python3 -c "import shutil; shutil.make_archive('$(APP_NAME)-$(VERSION)-windows-amd64','zip','.','$(APP_NAME)-$(VERSION)-windows-amd64')"; \
+	  fi ); \
+	rm -rf $$stage; \
+	echo "✅ $(RELEASE_DIR)/$(APP_NAME)-$(VERSION)-windows-amd64.zip"
+	@echo ""
+	@echo "🎁 Done. Distributable archives:"
+	@ls -lh $(RELEASE_DIR)/*.tar.gz $(RELEASE_DIR)/*.zip 2>/dev/null
