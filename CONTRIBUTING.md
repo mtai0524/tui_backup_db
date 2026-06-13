@@ -289,11 +289,9 @@ func TestBackup(t *testing.T) {
 
 ### Documentation Files
 
-- **README.md** - Overview & quick start
-- **INSTALL.md** - Installation instructions
-- **QUICKSTART.md** - 5-minute guide
+- **README.md** - Overview, installation, usage & configuration
 - **DEPLOYMENT.md** - Production setup
-- **IMPROVEMENTS.md** - Roadmap & ideas
+- **CHANGELOG.md** - Version history
 
 ### Adding to Documentation
 

@@ -40,7 +40,7 @@ Ensure the following are installed:
 - **Database Tools** (depending on what you need):
   - `mysqldump` (MySQL/MariaDB) - [install guide](https://dev.mysql.com/doc/mysql-shell/8.0/en/mysql-shell-install.html)
   - `pg_dump` (PostgreSQL) - [install guide](https://www.postgresql.org/download/)
-  - `sqlcmd` (SQL Server) - [install guide](https://docs.microsoft.com/en-us/sql/tools/sqlcmd-utility)
+  - `sqlcmd` (SQL Server) - [go-sqlcmd](https://github.com/microsoft/go-sqlcmd) (see [install steps below](#installing-database-client-tools))
 
 ---
 
@@ -87,6 +87,39 @@ sudo cp bakdb /usr/local/bin/
 # or
 make dev
 ```
+
+### Option 4: Docker
+
+```bash
+docker build -t bakdb:1.0.0 .
+docker run -it -v ~/.bakdb:/root/.bakdb -v ~/backups:/backups bakdb:1.0.0
+```
+
+### Installing Database Client Tools
+
+bakdb shells out to the native client tools. Install the one(s) you need:
+
+| Database   | Linux (apt)                          | macOS (brew)            |
+|------------|--------------------------------------|-------------------------|
+| MySQL      | `apt-get install mysql-client`       | `brew install mysql-client` |
+| PostgreSQL | `apt-get install postgresql-client`  | `brew install postgresql`   |
+| SQL Server | `sqlcmd` — see below                 | `brew install sqlcmd`       |
+
+**SQL Server (`sqlcmd`)** — required for **both** `.bak` and `.sql` backups. If `apt`/`brew`
+has no package for your OS, install the standalone [go-sqlcmd](https://github.com/microsoft/go-sqlcmd) binary:
+
+```bash
+ARCH=$([ "$(uname -m)" = aarch64 ] && echo arm64 || echo amd64)
+curl -fsSL -o /tmp/sqlcmd.tar.bz2 \
+  "https://github.com/microsoft/go-sqlcmd/releases/latest/download/sqlcmd-linux-${ARCH}.tar.bz2"
+tar -xjf /tmp/sqlcmd.tar.bz2 -C /tmp
+install -m 755 /tmp/sqlcmd ~/.local/bin/sqlcmd   # ~/.local/bin must be in PATH
+sqlcmd --version
+```
+
+> **Note:** Hosted SQL Server (e.g. databaseasp.net / MonsterASP) often exposes a separate
+> **remote** host for external connections. Use the "Remote access for SSMS" address, not the
+> "Local access" one — the local hostname resolves to an internal IP and will time out.
 
 ---
 
