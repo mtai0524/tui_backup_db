@@ -1,112 +1,29 @@
-# bakdb - Enterprise Database Backup Manager
+# bakdb — Database Backup Manager
 
-<div align="center">
+![bakdb](https://img.shields.io/badge/bakdb-v1.0.0-blue) ![Go](https://img.shields.io/badge/Go-1.18+-00ADD8?logo=go) ![License](https://img.shields.io/badge/License-MIT-green)
 
-![bakdb](https://img.shields.io/badge/bakdb-v1.0.0-blue)
-![Go](https://img.shields.io/badge/Go-1.18+-00ADD8?logo=go)
-![License](https://img.shields.io/badge/License-MIT-green)
+An interactive terminal (TUI) tool to back up **MySQL**, **PostgreSQL**, and **SQL Server** databases, with optional Gmail delivery of the backup file.
 
-**A modern, interactive terminal-based database backup tool with professional HTML email support.**
+## Features
 
-[Features](#-features) • [Installation](#-installation) • [Quick Start](#-quick-start) • [Usage](#-usage) • [Configuration](#-configuration)
+- Interactive TUI (Bubble Tea), no flags to memorize
+- MySQL, PostgreSQL, SQL Server
+- SQL Server output as `.bak` (native) or `.sql` (portable script)
+- Send backups via Gmail (HTML + plain-text email)
+- Defaults from a `.env` file
 
-</div>
+## Requirements
 
----
+- **Go** 1.18+
+- The client tool for your database (bakdb shells out to it):
 
-## 🎯 Features
+| Database   | Tool        | Linux (apt)                         | macOS (brew)               |
+|------------|-------------|-------------------------------------|----------------------------|
+| MySQL      | `mysqldump` | `apt install mysql-client`          | `brew install mysql-client`|
+| PostgreSQL | `pg_dump`   | `apt install postgresql-client`     | `brew install postgresql`  |
+| SQL Server | `sqlcmd`    | see below                           | `brew install sqlcmd`      |
 
-- **📦 Interactive TUI**: Modern terminal interface with Bubble Tea framework
-- **🗄️ Multi-Database Support**: MySQL, PostgreSQL, SQL Server
-- **📊 Backup Formats**:
-  - `.sql` scripts (portable, works everywhere)
-  - `.bak` files (SQL Server native format, compact & fast)
-- **📧 Professional Email Integration**: 
-  - HTML formatted emails with styling
-  - Backup details, restore instructions, security warnings
-  - Plain text fallback for compatibility
-- **⚡ Smart Format Selection**: Auto-detect local/remote servers
-- **🔐 Secure**: No sensitive data logging, supports App Passwords
-- **🎨 Real-time Feedback**: Spinners and status messages
-- **⚙️ Configurable**: `.env` file support for defaults
-
----
-
-## 📋 Prerequisites
-
-Ensure the following are installed:
-
-- **Go** 1.18+ ([download](https://golang.org/dl/))
-- **Database Tools** (depending on what you need):
-  - `mysqldump` (MySQL/MariaDB) - [install guide](https://dev.mysql.com/doc/mysql-shell/8.0/en/mysql-shell-install.html)
-  - `pg_dump` (PostgreSQL) - [install guide](https://www.postgresql.org/download/)
-  - `sqlcmd` (SQL Server) - [go-sqlcmd](https://github.com/microsoft/go-sqlcmd) (see [install steps below](#installing-database-client-tools))
-
----
-
-## 🚀 Installation
-
-### Option 1: Quick Install (Recommended)
-
-```bash
-# Clone repository
-git clone https://github.com/mtai0524/tui_backup_db.git
-cd bakdb
-
-# Run installation script
-chmod +x install.sh
-./install.sh
-```
-
-This will:
-- ✅ Check Go and Git
-- ✅ Build the application
-- ✅ Install to `/usr/local/bin`
-- ✅ Create config directory `~/.bakdb`
-
-### Option 2: Manual Build
-
-```bash
-# Clone repository
-git clone https://github.com/mtai0524/tui_backup_db.git
-cd bakdb
-
-# Build
-make build
-# or: go build -o bakdb
-
-# Install (optional)
-sudo cp bakdb /usr/local/bin/
-```
-
-### Option 3: Run Without Installing
-
-```bash
-# From project directory
-./run.sh
-# or
-make dev
-```
-
-### Option 4: Docker
-
-```bash
-docker build -t bakdb:1.0.0 .
-docker run -it -v ~/.bakdb:/root/.bakdb -v ~/backups:/backups bakdb:1.0.0
-```
-
-### Installing Database Client Tools
-
-bakdb shells out to the native client tools. Install the one(s) you need:
-
-| Database   | Linux (apt)                          | macOS (brew)            |
-|------------|--------------------------------------|-------------------------|
-| MySQL      | `apt-get install mysql-client`       | `brew install mysql-client` |
-| PostgreSQL | `apt-get install postgresql-client`  | `brew install postgresql`   |
-| SQL Server | `sqlcmd` — see below                 | `brew install sqlcmd`       |
-
-**SQL Server (`sqlcmd`)** — required for **both** `.bak` and `.sql` backups. If `apt`/`brew`
-has no package for your OS, install the standalone [go-sqlcmd](https://github.com/microsoft/go-sqlcmd) binary:
+**`sqlcmd` is required for SQL Server** (both `.bak` and `.sql`). If your OS has no package, install the standalone [go-sqlcmd](https://github.com/microsoft/go-sqlcmd) binary:
 
 ```bash
 ARCH=$([ "$(uname -m)" = aarch64 ] && echo arm64 || echo amd64)
@@ -117,266 +34,75 @@ install -m 755 /tmp/sqlcmd ~/.local/bin/sqlcmd   # ~/.local/bin must be in PATH
 sqlcmd --version
 ```
 
-> **Note:** Hosted SQL Server (e.g. databaseasp.net / MonsterASP) often exposes a separate
-> **remote** host for external connections. Use the "Remote access for SSMS" address, not the
-> "Local access" one — the local hostname resolves to an internal IP and will time out.
-
----
-
-## ⚡ Quick Start
-
-### 1. Run the application
+## Install
 
 ```bash
-bakdb
+git clone https://github.com/mtai0524/tui_backup_db.git
+cd tui_backup_db
+
+./install.sh          # build + install to /usr/local/bin (recommended)
+# or: go build -o bakdb && ./bakdb
+# or: ./run.sh         (build + run without installing)
+# or: make release     (cross-platform binaries)
 ```
 
-### 2. Select Database Type
+Docker:
 
-```
-┌─────────────────────────────────┐
-│ Select Database Type            │
-├─────────────────────────────────┤
-│ ▸ MySQL                         │
-│   PostgreSQL                    │
-│   SQL Server                    │
-└─────────────────────────────────┘
+```bash
+docker build -t bakdb:1.0.0 .
+docker run -it -v ~/.bakdb:/root/.bakdb -v ~/backups:/backups bakdb:1.0.0
 ```
 
-### 3. Enter Connection Details
+## Usage
 
-```
-┌─────────────────────────────────┐
-│ Backup MySQL Database           │
-├─────────────────────────────────┤
-│ Host          │ localhost       │
-│ Port          │ 3306            │
-│ Username      │ root            │
-│ Password      │ ••••••••        │
-│ Database Name │ mydb            │
-│ ...more fields...               │
-│                                 │
-│        [ Start Backup ]         │
-└─────────────────────────────────┘
-```
+Run `bakdb`, then:
 
-### 4. Backup Runs
+1. Pick the database type (↑↓, Enter).
+2. Fill in connection details (Tab / Enter between fields; Database Name is required).
+3. Select `[ Start Backup ]`.
+4. On success, press `e` to email the file, `r` to restart, `q` to quit.
 
-```
-⟳ Backing up MySQL...
+**SQL Server format** — choose in the UI or via `BAKDB_BACKUP_FORMAT`:
 
-This may take a moment depending on the database size.
-```
+- `.bak` — native, faster/smaller, SQL Server only (default for local servers)
+- `.sql` — portable script, works anywhere (default for remote servers)
 
-### 5. View Result & Send Email
+## Configuration
 
-```
-✔ Backup Successful!
-
-File saved to: /home/user/mydb_20240514_143022.sql
-
-(e) send via email  (r) restart  (q) quit
-```
-
----
-
-## 📖 Usage
-
-### Via TUI
-
-1. Press **↑↓** arrows to navigate
-2. Press **Tab/Shift+Tab** to move between fields
-3. Press **Enter** to confirm or move to next field
-4. Press **Ctrl+C** or **Q** to quit
-5. Press **E** (on result screen) to send backup via email
-
-### SQL Server Format Selection
-
-For SQL Server, you can choose:
-- **`.bak`** (Native SQL Server backup)
-  - Faster, more compact
-  - Only works on SQL Server
-  - Default for local servers
-  
-- **`.sql`** (SQL Script)
-  - Portable, works anywhere
-  - Larger file size
-  - Default for remote servers
-
-Set via UI or `.env`:
-```env
-BAKDB_BACKUP_FORMAT=.bak
-```
-
----
-
-## ⚙️ Configuration
-
-### Environment Variables
-
-Create `~/.bakdb/.env` or `./.env` with defaults:
+Create `./.env` or `~/.bakdb/.env` (copy from [.env.example](.env.example)) to pre-fill defaults:
 
 ```env
-# Database Type: MySQL | PostgreSQL | SQL Server
-BAKDB_TYPE=MySQL
-
-# Connection (use ONE of these)
-# Option A: Connection String
-BAKDB_CONN_STRING=user:password@tcp(localhost:3306)/dbname
-
-# Option B: Individual fields
+BAKDB_TYPE=MySQL                 # MySQL | PostgreSQL | SQL Server
 BAKDB_HOST=localhost
 BAKDB_PORT=3306
 BAKDB_USER=root
 BAKDB_PASSWORD=secret
 BAKDB_DATABASE=mydb
-
-# Optional
-BAKDB_BINARY_PATH=/usr/bin/mysqldump
+# BAKDB_CONN_STRING=...          # overrides the host/port/user/password fields
 BAKDB_OUTPUT_DIR=~/backups
-BAKDB_BACKUP_FORMAT=.bak
+BAKDB_BACKUP_FORMAT=.bak         # SQL Server only
 
-# Email Configuration
-BAKDB_EMAIL_FROM=your-email@gmail.com
+# Email (Gmail App Password — never commit .env)
+BAKDB_EMAIL_FROM=you@gmail.com
 BAKDB_EMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
 BAKDB_EMAIL_TO=recipient@example.com
-BAKDB_EMAIL_SUBJECT=Database Backup
 ```
 
-### Email Setup (Gmail)
+**Gmail:** enable 2FA, create an [App Password](https://myaccount.google.com/apppasswords) (16 chars), and use it for `BAKDB_EMAIL_APP_PASSWORD` — not your normal password.
 
-1. Enable 2-Factor Authentication on Gmail
-2. Create an App Password: https://myaccount.google.com/apppasswords
-3. Use the 16-character password in `BAKDB_EMAIL_APP_PASSWORD`
-4. Configure `BAKDB_EMAIL_FROM` with your Gmail address
+## Troubleshooting
 
----
+- **`executable file not found: sqlcmd / mysqldump / pg_dump`** — install the client tool (see Requirements) and make sure it's on your `PATH`.
+- **`i/o timeout` connecting to a hosted SQL Server** (e.g. databaseasp.net / MonsterASP) — use the **"Remote access for SSMS"** host, not "Local access". The local hostname resolves to an internal IP that's unreachable from outside.
+- **`.bak` not created** — `.bak` writes on the SQL Server machine, so it only works for local servers. Use `.sql` for remote.
+- **Email auth fails** — confirm 2FA is on and you're using a Gmail App Password (16 chars).
 
-## 🏗️ Project Structure
+## Project layout
 
 ```
-bakdb/
-├── main.go              # Entry point
-├── ui/                  # TUI components
-│   ├── model.go        # Bubble Tea model
-│   ├── views.go        # View rendering
-│   ├── updates.go      # Event handling
-│   ├── email_modal.go  # Email UI
-│   └── styles.go       # Styling
-├── backup/              # Backup engine
-│   └── engine.go       # Backup logic (MySQL, PostgreSQL, SQL Server)
-├── email/               # Email utilities
-│   └── email.go        # SMTP client, HTML/text formatting
-├── config/              # Configuration
-│   └── env.go          # .env parsing
-├── Makefile            # Build automation
-├── install.sh          # Installation script
-├── run.sh              # Quick run script
-└── go.mod/.env.example # Dependencies & template config
+main.go      ui/        backup/engine.go   email/email.go   config/env.go
 ```
 
----
+## License
 
-## 🔨 Development
-
-### Build Commands
-
-```bash
-# Current platform
-make build
-
-# Specific platforms
-make linux-amd64
-make macos-amd64
-make windows
-
-# All platforms
-make release
-
-# Development (build + run)
-make dev
-
-# Install to system
-sudo make install
-sudo make uninstall
-
-# Clean build artifacts
-make clean
-```
-
-### Debug
-
-```bash
-# Show version info
-bakdb --version
-
-# Run with custom env file
-BAKDB_ENV_FILE=/path/to/.env bakdb
-```
-
----
-
-## 📧 Email Features
-
-### Professional HTML Emails
-
-- Gradient header with emoji icons
-- Database info cards (name, size, format, time)
-- Restore instructions for each format
-- Security warnings
-- Professional footer
-
-### Plain Text Fallback
-
-Emails support both HTML and plain text for maximum compatibility.
-
----
-
-## ⚠️ Security Notes
-
-- **Passwords**: Never commit `.env` to version control
-- **App Passwords**: Gmail App Passwords are security tokens, treat them like passwords
-- **Backup Files**: Store backups securely, restrict access
-- **Email**: Consider encrypting backups before emailing
-
----
-
-## 🐛 Troubleshooting
-
-### "Command not found: mysqldump"
-- Install MySQL: `brew install mysql` (macOS) or `apt-get install mysql-client` (Linux)
-- Ensure tool is in PATH
-
-### Email authentication fails
-- Check Gmail App Password (should be 16 chars with spaces)
-- Verify 2FA is enabled on Gmail account
-- Check sender email matches Gmail account
-
-### .bak file not created locally
-- Ensure SQL Server service is running
-- Check directory permissions
-- For remote servers, use `.sql` format instead
-
----
-
-## 📝 License
-
-MIT License - feel free to use commercially
-
----
-
-## 🤝 Contributing
-
-Contributions welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Commit changes
-4. Push and create a Pull Request
-
----
-
-## 📞 Support
-
-- 📖 [Documentation](./README.md)
-- 🐛 [Report Issues](https://github.com/mtai0524/tui_backup_db/issues)
-- 💡 [Feature Requests](https://github.com/mtai0524/tui_backup_db/discussions)
+MIT.
