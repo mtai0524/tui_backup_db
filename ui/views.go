@@ -13,25 +13,53 @@ func (m Model) viewEnterDetails() string {
 	b.WriteString(titleStyle.Render(fmt.Sprintf(" Backup %s Database ", m.dbType)))
 	b.WriteString("\n\n")
 
-	// Show all inputs except backup format (index 8) unless it's SQL Server
-	displayCount := 8
-	if m.dbType == "SQL Server" {
-		displayCount = 9
+	stops := m.focusStops()
+	current := stops[m.focusIndex]
+
+	// Required fields (0-4), always shown.
+	for i := 0; i <= 4; i++ {
+		b.WriteString(m.inputs[i].View())
+		b.WriteRune('\n')
 	}
 
-	for i := 0; i < displayCount; i++ {
-		b.WriteString(m.inputs[i].View())
-		if i < displayCount-1 {
+	// Advanced toggle row.
+	b.WriteString("\n")
+	b.WriteString(m.renderAdvancedToggle(current == stopAdvancedToggle))
+	b.WriteString("\n")
+
+	// Optional fields, indented, only when expanded.
+	if m.advancedExpanded {
+		optional := []int{5, 6, 7}
+		if m.dbType == "SQL Server" {
+			optional = append(optional, 8)
+		}
+		for _, i := range optional {
+			b.WriteString("  ")
+			b.WriteString(m.inputs[i].View())
 			b.WriteRune('\n')
 		}
 	}
 
-	button := "\n\n" + m.renderButton("Start Backup", m.focusIndex == displayCount)
-	b.WriteString(button)
+	b.WriteString("\n")
+	b.WriteString(m.renderButton("Start Backup", current == stopButton))
 
-	b.WriteString(helpStyle.Render("\n\n (tab/shift+tab: move • enter: next/submit • ctrl+c: quit)"))
+	b.WriteString(helpStyle.Render("\n\n (tab/shift+tab: move • enter: next/expand/submit • ctrl+c: quit)"))
 
 	return docStyle.Render(b.String())
+}
+
+// renderAdvancedToggle draws the collapsible advanced-options row, marked ▸ when
+// collapsed and ▾ when expanded, highlighted when it is the focused stop.
+func (m Model) renderAdvancedToggle(focused bool) string {
+	marker := "▸"
+	if m.advancedExpanded {
+		marker = "▾"
+	}
+	label := marker + " Advanced options"
+	if focused {
+		return focusedStyle.Render(label)
+	}
+	return label
 }
 
 func (m Model) viewBackingUp() string {

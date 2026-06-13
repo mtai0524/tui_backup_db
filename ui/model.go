@@ -20,19 +20,20 @@ const (
 )
 
 type Model struct {
-	state        state
-	dbType       string
-	list         list.Model
-	inputs       []textinput.Model
-	focusIndex   int
-	spinner      spinner.Model
-	err          error
-	message      string
-	quitting     bool
-	emailModal   EmailModal
-	defaults     config.Defaults
-	databaseName string // Tên database vừa backup (dùng cho email)
-	backupFormat string // Định dạng backup vừa thực hiện
+	state            state
+	dbType           string
+	list             list.Model
+	inputs           []textinput.Model
+	focusIndex       int
+	advancedExpanded bool // whether the optional-fields section is shown
+	spinner          spinner.Model
+	err              error
+	message          string
+	quitting         bool
+	emailModal       EmailModal
+	defaults         config.Defaults
+	databaseName     string // Tên database vừa backup (dùng cho email)
+	backupFormat     string // Định dạng backup vừa thực hiện
 }
 
 type item struct {
@@ -99,16 +100,19 @@ func InitialModel() Model {
 
 	applyDefaults(inputs, defaults)
 
+	autoExpand := shouldAutoExpand(inputs)
+
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = spinnerStyle
 
 	m := Model{
-		state:    stateSelectDB,
-		list:     l,
-		inputs:   inputs,
-		spinner:  s,
-		defaults: defaults,
+		state:            stateSelectDB,
+		list:             l,
+		inputs:           inputs,
+		spinner:          s,
+		defaults:         defaults,
+		advancedExpanded: autoExpand,
 	}
 
 	// Nếu .env chỉ định BAKDB_TYPE hợp lệ, nhảy thẳng vào màn nhập chi tiết

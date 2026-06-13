@@ -46,49 +46,65 @@ func (m Model) updateEnterDetails(msg tea.Msg) (Model, tea.Cmd) {
 		switch msg.String() {
 		case "tab", "shift+tab", "enter", "up", "down":
 			s := msg.String()
+			stops := m.focusStops()
+			cur := stops[m.focusIndex]
 
-			// Calculate max focus index based on DB type
-			maxFocusIdx := 7 // Always show fields 0-7
-			if m.dbType == "SQL Server" {
-				maxFocusIdx = 8 // SQL Server also shows backup format (field 8)
+			// Enter on the advanced toggle expands/collapses instead of moving.
+			if s == "enter" && cur == stopAdvancedToggle {
+				m.advancedExpanded = !m.advancedExpanded
+				// Keep focus on the toggle row after toggling. Its position is
+				// fixed at index 5 (after the 5 required inputs).
+				m.focusIndex = 5
+				return m, m.refocusInputs()
 			}
 
-			if s == "enter" && m.focusIndex == maxFocusIdx+1 {
+			// Enter on the button submits.
+			if s == "enter" && cur == stopButton {
 				m.state = stateBackingUp
 				return m, tea.Batch(m.spinner.Tick, m.startBackupCmd())
 			}
 
+			// Otherwise move between stops.
 			if s == "up" || s == "shift+tab" {
 				m.focusIndex--
 			} else {
 				m.focusIndex++
 			}
-
-			if m.focusIndex > maxFocusIdx+1 {
+			last := len(stops) - 1
+			if m.focusIndex > last {
 				m.focusIndex = 0
 			} else if m.focusIndex < 0 {
-				m.focusIndex = maxFocusIdx + 1
+				m.focusIndex = last
 			}
 
-			cmds := make([]tea.Cmd, len(m.inputs))
-			for i := 0; i <= len(m.inputs)-1; i++ {
-				if i == m.focusIndex {
-					cmds[i] = m.inputs[i].Focus()
-					m.inputs[i].PromptStyle = focusedStyle
-					m.inputs[i].TextStyle = focusedStyle
-					continue
-				}
-				m.inputs[i].Blur()
-				m.inputs[i].PromptStyle = noStyle
-				m.inputs[i].TextStyle = noStyle
-			}
-
-			return m, tea.Batch(cmds...)
+			return m, m.refocusInputs()
 		}
 	}
 
 	cmd := m.updateInputs(msg)
 	return m, cmd
+}
+
+// refocusInputs focuses the textinput at the current stop (if the current stop
+// is an input index) and blurs all others, updating prompt/text styles. The
+// advanced-toggle and button stops are not inputs, so when they are current no
+// input is focused.
+func (m *Model) refocusInputs() tea.Cmd {
+	stops := m.focusStops()
+	current := stops[m.focusIndex]
+	cmds := make([]tea.Cmd, len(m.inputs))
+	for i := range m.inputs {
+		if i == current {
+			cmds[i] = m.inputs[i].Focus()
+			m.inputs[i].PromptStyle = focusedStyle
+			m.inputs[i].TextStyle = focusedStyle
+			continue
+		}
+		m.inputs[i].Blur()
+		m.inputs[i].PromptStyle = noStyle
+		m.inputs[i].TextStyle = noStyle
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m *Model) updateInputs(msg tea.Msg) tea.Cmd {
