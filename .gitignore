@@ -34,3 +34,6 @@ Thumbs.db
 # Test coverage
 *.out
 coverage.txt
+
+# Brainstorm visual companion
+.superpowers/
