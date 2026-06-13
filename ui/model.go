@@ -34,6 +34,7 @@ type Model struct {
 	defaults         config.Defaults
 	databaseName     string // Tên database vừa backup (dùng cho email)
 	backupFormat     string // Định dạng backup vừa thực hiện
+	catFrame         int    // animation frame counter for the backing-up screen
 }
 
 type item struct {

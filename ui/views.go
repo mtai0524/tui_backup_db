@@ -63,12 +63,13 @@ func (m Model) renderAdvancedToggle(focused bool) string {
 }
 
 func (m Model) viewBackingUp() string {
-	return docStyle.Render(fmt.Sprintf(
-		"%s Backing up %s...\n\n%s",
-		m.spinner.View(),
-		m.dbType,
-		helpStyle.Render("This may take a moment depending on the database size."),
-	))
+	var b strings.Builder
+	b.WriteString(catView(m.catFrame))
+	b.WriteString("\n\n")
+	b.WriteString(fmt.Sprintf("%s Đang backup %s...", m.spinner.View(), m.dbType))
+	b.WriteString("\n\n")
+	b.WriteString(helpStyle.Render("Vui lòng đợi, tùy kích thước database."))
+	return docStyle.Render(b.String())
 }
 
 func (m Model) viewResult() string {

@@ -3,6 +3,7 @@ package ui
 import (
 	"bakdb/backup"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -129,6 +130,10 @@ func (m Model) updateBackingUp(msg tea.Msg) (Model, tea.Cmd) {
 			m.message = msg.path
 		}
 		return m, nil
+	}
+
+	if _, ok := msg.(spinner.TickMsg); ok {
+		m.catFrame++
 	}
 
 	var cmd tea.Cmd
